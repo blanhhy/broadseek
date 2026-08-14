@@ -1,5 +1,5 @@
 // 主聊天区：按活跃路径顺序展示消息，支持加载/错误态与滚动定位
-// 每个消息若存在同父兄弟（分支），下方显示"第 X/Y 条"切换器
+// 每个消息若存在同父兄弟（分支），下方显示"X/Y"切换器
 
 import { Fragment, forwardRef, memo, useEffect, useImperativeHandle, useMemo, useRef } from 'react';
 import type { NormalizedMessage } from '../core/api/types';
@@ -27,13 +27,13 @@ function Bubble({ m }: { m: NormalizedMessage }) {
     <div className={`msg-row ${isUser ? 'user' : 'ai'}`} id={`msg-${m.id}`}>
       {!isUser && m.thinking && m.thinking.content && (
         <details className="msg-thinking">
-          <summary>思考 · {m.thinking.elapsed_secs ? `${m.thinking.elapsed_secs}s` : ''}</summary>
+          <summary>已思考（用时 {m.thinking.elapsed_secs ? `${Math.round(m.thinking.elapsed_secs * 10) / 10}` : ''} 秒）</summary>
           <div className="thinking-body">{m.thinking.content}</div>
         </details>
       )}
       <div className="msg-bubble">
         <div className="msg-content">
-          {/* 用户消息是纯文本（保留换行）；AI 消息才需要 markdown */}
+          {/* 用户消息是原始文本；AI 消息才需要 markdown */}
           {isUser ? m.content : <Markdown text={m.content} />}
         </div>
         {!isUser && m.files && m.files.length > 0 && (
@@ -47,7 +47,7 @@ function Bubble({ m }: { m: NormalizedMessage }) {
 // memo：消息对象引用不变则不重渲染，避免父组件重渲染时全量重解析 markdown
 const BubbleMemo = memo(Bubble);
 
-// 分支切换器：第 X/Y 条，左右切换同父的其他兄弟消息
+// 分支切换器：X/Y，左右切换同父的其他兄弟消息
 function BranchSwitcher({
   siblings,
   index,
@@ -71,7 +71,7 @@ function BranchSwitcher({
           <path d="M15 18l-6-6 6-6" />
         </svg>
       </button>
-      <span className="switcher-label">第 {index + 1}/{siblings.length} 条</span>
+      <span className="switcher-label">{index + 1}/{siblings.length}</span>
       <button
         className="switcher-btn"
         disabled={!next}

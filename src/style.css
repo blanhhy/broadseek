@@ -315,6 +315,7 @@ textarea { font: inherit; resize: none; }
   font-size: 13px;
   color: var(--text-dim);
   display: -webkit-box;
+  line-clamp: 2;
   -webkit-line-clamp: 2;
   -webkit-box-orient: vertical;
   overflow: hidden;
@@ -414,7 +415,7 @@ textarea { font: inherit; resize: none; }
 }
 .msg-tags { margin-top: 6px; font-size: 12px; color: var(--text-dim); }
 
-/* ── 分支切换器：第 X/Y 条 ── */
+/* ── 分支切换器 ── */
 .branch-switcher {
   display: flex;
   align-items: center;
@@ -426,7 +427,6 @@ textarea { font: inherit; resize: none; }
 .switcher-btn {
   width: 22px;
   height: 22px;
-  border-radius: 6px;
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -434,7 +434,7 @@ textarea { font: inherit; resize: none; }
 }
 .switcher-btn:hover:not(:disabled) { background: var(--bg-hover); color: var(--text); }
 .switcher-btn:disabled { opacity: 0.35; cursor: default; }
-.switcher-label { font-size: 12px; min-width: 52px; text-align: center; }
+.switcher-label { font-size: 12px; text-align: center; }
 
 /* ── Markdown 渲染 ── */
 .markdown { font-size: 15px; line-height: 1.6; word-break: break-word; }
@@ -496,7 +496,6 @@ textarea { font: inherit; resize: none; }
   font-size: 13px;
   color: var(--text-faint);
 }
-.msg-thinking summary { cursor: pointer; user-select: none; }
 .thinking-body {
   margin-top: 6px;
   color: var(--text-dim);
