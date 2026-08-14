@@ -4,6 +4,14 @@
 import type { ChatMessage, ChatSession, NormalizedMessage } from './types';
 import { makePowHeader } from './pow';
 import type { PowChallenge } from './pow';
+import { DsBridge, type DsSseEvent } from './nativeBridge';
+import type { PluginListenerHandle } from '@capacitor/core';
+
+// 是否运行在 Capacitor 原生环境（区别于浏览器）
+export function isNativeRuntime(): boolean {
+  const c = (globalThis as any).Capacitor;
+  return !!c && typeof c.isNativePlatform === 'function' && c.isNativePlatform();
+}
 
 // dev 走 Vite 代理（/api/v0 → https://chat.deepseek.com）绕开 CORS；
 // 生产（Capacitor/Web 部署）用绝对地址，届时依赖原生 HTTP 桥或后端代理。
@@ -74,23 +82,40 @@ async function request<T>(
   if (_token) headers['Authorization'] = `Bearer ${_token}`;
   if (powHeader) headers['X-Ds-Pow-Response'] = powHeader;
 
-  let resp: Response;
-  try {
-    resp = await fetch(url.toString(), {
+  let text: string;
+  if (isNativeRuntime()) {
+    // 原生环境：走 OkHttp 原生桥，绕过 chat.deepseek.com 的 CORS/WAF 拦截
+    const resp = await DsBridge.request({
       method,
+      url: url.toString(),
       headers,
-      body: body !== undefined ? JSON.stringify(body) : undefined,
+      body: body !== undefined ? JSON.stringify(body) : null,
     });
-  } catch (e) {
-    throw new ApiError(`网络请求失败: ${e instanceof Error ? e.message : e}`, -1);
+    if (typeof resp.data === 'string') {
+      text = resp.data;
+    } else {
+      // 原生桥已解析为 JSObject，重新序列化以走统一的信封解析
+      text = JSON.stringify(resp.data);
+    }
+  } else {
+    let raw: Response;
+    try {
+      raw = await fetch(url.toString(), {
+        method,
+        headers,
+        body: body !== undefined ? JSON.stringify(body) : undefined,
+      });
+    } catch (e) {
+      throw new ApiError(`网络请求失败: ${e instanceof Error ? e.message : e}`, -1);
+    }
+    text = await raw.text();
   }
 
-  const text = await resp.text();
   let json: any;
   try {
     json = JSON.parse(text);
   } catch {
-    throw new ApiError(`响应非 JSON (HTTP ${resp.status})`);
+    throw new ApiError(`响应非 JSON (HTTP ${text})`);
   }
 
   const env = json as Envelope;
@@ -254,37 +279,7 @@ export async function sendCompletion(
     preempt: false,
     ...body,
   };
-  const resp = await fetch(`${BASE}/chat/completion`, {
-    method: 'POST',
-    headers,
-    body: JSON.stringify(fullBody),
-    signal,
-  });
-  if (!resp.ok || !resp.body) {
-    throw new ApiError(`completion HTTP ${resp.status}`);
-  }
-  const reader = resp.body.getReader();
-  const decoder = new TextDecoder();
-  let buffer = '';
-  while (true) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    buffer += decoder.decode(value, { stream: true });
-    // 按行解析 SSE
-    let idx;
-    while ((idx = buffer.indexOf('\n')) >= 0) {
-      const line = buffer.slice(0, idx).trim();
-      buffer = buffer.slice(idx + 1);
-      if (!line.startsWith('data:')) continue;
-      const payload = line.slice(5).trim();
-      if (!payload || payload === '[DONE]') continue;
-      try {
-        onEvent(JSON.parse(payload));
-      } catch {
-        /* 忽略坏帧 */
-      }
-    }
-  }
+  await streamSse(`${BASE}/chat/completion`, headers, fullBody, onEvent, signal);
 }
 
 // 编辑消息重发（SSE 流式，与 completion 相同格式）
@@ -314,34 +309,40 @@ export async function editMessage(
     search_enabled: true,
     ...body,
   };
-  const resp = await fetch(`${BASE}/chat/edit_message`, {
+  await streamSse(`${BASE}/chat/edit_message`, headers, fullBody, onEvent, signal);
+}
+
+// ── SSE 流式读取（原生桥 / fetch 双后端）──
+async function streamSse(
+  url: string,
+  headers: Record<string, string>,
+  body: Record<string, any>,
+  onEvent: (obj: Record<string, any>) => void,
+  signal?: AbortSignal,
+): Promise<void> {
+  if (isNativeRuntime()) {
+    await nativeStreamSse(url, headers, body, onEvent, signal);
+    return;
+  }
+  await fetchStreamSse(url, headers, body, onEvent, signal);
+}
+
+// 浏览器（dev）：用 fetch ReadableStream 逐行解析 SSE
+async function fetchStreamSse(
+  url: string,
+  headers: Record<string, string>,
+  body: Record<string, any>,
+  onEvent: (obj: Record<string, any>) => void,
+  signal?: AbortSignal,
+): Promise<void> {
+  const resp = await fetch(url, {
     method: 'POST',
     headers,
-    body: JSON.stringify(fullBody),
+    body: JSON.stringify(body),
     signal,
   });
   if (!resp.ok || !resp.body) {
-    // 尝试解析业务错误（edit_message 可能返回 JSON 而非 SSE）
-    try {
-      const errData = await resp.json();
-      const biz = errData?.data;
-      if (biz && biz.biz_code !== 0) {
-        throw new ApiError(biz.biz_msg || `业务错误 ${biz.biz_code}`, errData.code ?? -1, biz.biz_code);
-      }
-    } catch (e) {
-      if (e instanceof ApiError) throw e;
-    }
-    throw new ApiError(`edit_message HTTP ${resp.status}`);
-  }
-  // 检查 Content-Type：若返回 JSON 而非 SSE，说明是业务错误
-  const ct = resp.headers.get('content-type') ?? '';
-  if (ct.includes('application/json')) {
-    const errData = await resp.json();
-    const biz = errData?.data;
-    if (biz && biz.biz_code !== 0) {
-      throw new ApiError(biz.biz_msg || `业务错误 ${biz.biz_code}`, errData.code ?? -1, biz.biz_code);
-    }
-    throw new ApiError('edit_message 返回非预期格式');
+    throw new ApiError(`completion HTTP ${resp.status}`);
   }
   const reader = resp.body.getReader();
   const decoder = new TextDecoder();
@@ -364,6 +365,70 @@ export async function editMessage(
       }
     }
   }
+}
+
+// 原生（Android）：走 DsBridge 插件，SSE 事件由原生逐行回传
+// 每个流分配唯一 key，全局监听器按 key 分发到对应回调
+let sseSeq = 0;
+let sseListenerPromise: Promise<PluginListenerHandle> | null = null;
+const sseHandlers = new Map<string, (ev: DsSseEvent) => void>();
+
+// 惰性建立全局监听器（并发安全：只建一次，多个流共享）
+function getSseListener(): Promise<PluginListenerHandle> {
+  if (!sseListenerPromise) {
+    sseListenerPromise = DsBridge.addListener('sseEvent', (ev) => {
+      const handler = sseHandlers.get(ev.key ?? '');
+      if (handler) handler(ev);
+    });
+  }
+  return sseListenerPromise;
+}
+
+async function nativeStreamSse(
+  url: string,
+  headers: Record<string, string>,
+  body: Record<string, any>,
+  onEvent: (obj: Record<string, any>) => void,
+  signal?: AbortSignal,
+): Promise<void> {
+  const key = `sse-${++sseSeq}`;
+  await getSseListener();
+
+  await new Promise<void>((resolve, reject) => {
+    const handler = (ev: DsSseEvent) => {
+      if (ev.type === 'data' && ev.payload) {
+        try {
+          onEvent(JSON.parse(ev.payload));
+        } catch {
+          /* 忽略坏帧 */
+        }
+      } else if (ev.type === 'end') {
+        sseHandlers.delete(key);
+        resolve();
+      } else if (ev.type === 'error') {
+        sseHandlers.delete(key);
+        reject(new ApiError(ev.message || 'SSE 请求失败', -1, ev.status ?? -1));
+      }
+    };
+    sseHandlers.set(key, handler);
+    // 支持取消：AbortSignal 触发时通知原生停止
+    if (signal) {
+      if (signal.aborted) {
+        sseHandlers.delete(key);
+        DsBridge.stopSse({ key });
+        reject(new ApiError('已取消'));
+        return;
+      }
+      signal.addEventListener('abort', () => {
+        sseHandlers.delete(key);
+        DsBridge.stopSse({ key });
+      }, { once: true });
+    }
+    DsBridge.startSse({ url, method: 'POST', headers, body: JSON.stringify(body), key }).catch((e) => {
+      sseHandlers.delete(key);
+      reject(e instanceof Error ? e : new ApiError(String(e)));
+    });
+  });
 }
 
 // ── 消息规范化（history → 结构化）──

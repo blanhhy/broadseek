@@ -71,6 +71,10 @@
 
 * { box-sizing: border-box; }
 
+/* 禁用 Android WebView 触屏选中时的蓝色方块高亮（点击/长按/按住均有） */
+* { -webkit-tap-highlight-color: transparent; }
+*:focus { outline: none; }
+
 /* 隐藏所有滚动条（保留滚动功能） */
 *::-webkit-scrollbar { display: none; }
 * { scrollbar-width: none; -ms-overflow-style: none; }
@@ -78,6 +82,16 @@
 html, body, #root { height: 100%; margin: 0; }
 
 body { background: var(--bg); }
+
+/* Android 15+ edge-to-edge：Capacitor 注入 --safe-area-inset-* 变量，
+   给根容器让出状态栏/导航栏/刘海区域，避免内容与系统栏重叠。
+   浏览器无该变量时回退为 0，不影响桌面预览。 */
+#root {
+  padding-top: var(--safe-area-inset-top, 0px);
+  padding-right: var(--safe-area-inset-right, 0px);
+  padding-bottom: var(--safe-area-inset-bottom, 0px);
+  padding-left: var(--safe-area-inset-left, 0px);
+}
 
 button { font: inherit; cursor: pointer; border: none; background: none; color: inherit; }
 textarea { font: inherit; resize: none; }
