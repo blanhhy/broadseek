@@ -1,4 +1,5 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import type { ChatSession } from '../core/api/types';
 import { createShare, deleteSession, forkShare, fetchHistory, normalizeMessage, renameSession } from '../core/api/client';
 import { activePathOf, buildIndex } from '../core/api/tree';
@@ -37,7 +38,28 @@ function fmtTime(ts: number): string {
 export default function ConversationList({ sessions, currentId, onOpen, onSessionsChange }: Props) {
   const [keyword, setKeyword] = useState('');
   const [busyId, setBusyId] = useState<string | null>(null);
-  const [msg, setMsg] = useState<string | null>(null);
+  // 居中 Toast（替代原先常驻侧栏顶部的横幅）：自动显现约 1s 后消失
+  const [toast, setToast] = useState<string | null>(null);
+  const [toastClosing, setToastClosing] = useState(false);
+  const toastTimer = useRef<number | null>(null);
+  const closeTimer = useRef<number | null>(null);
+  useEffect(() => () => {
+    if (toastTimer.current) window.clearTimeout(toastTimer.current);
+    if (closeTimer.current) window.clearTimeout(closeTimer.current);
+  }, []);
+  const showToast = (text: string) => {
+    setToastClosing(false);
+    setToast(text);
+    if (toastTimer.current) window.clearTimeout(toastTimer.current);
+    if (closeTimer.current) window.clearTimeout(closeTimer.current);
+    toastTimer.current = window.setTimeout(() => {
+      setToastClosing(true);
+      closeTimer.current = window.setTimeout(() => {
+        setToast(null);
+        setToastClosing(false);
+      }, 150);
+    }, 1000);
+  };
   // 菜单：记录被长按项目相对 .drawer 的上下位置 + 侧栏尺寸，用于固定靠右、优先上方/下方
   const [menu, setMenu] = useState<{
     id: string;
@@ -52,6 +74,9 @@ export default function ConversationList({ sessions, currentId, onOpen, onSessio
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editValue, setEditValue] = useState('');
   const editRef = useRef<HTMLInputElement>(null);
+
+  // 删除二次确认：避免误删，提供全屏遮罩对话框
+  const [confirmDelete, setConfirmDelete] = useState<ChatSession | null>(null);
 
   // 点击外部关闭菜单
   useEffect(() => {
@@ -101,11 +126,10 @@ export default function ConversationList({ sessions, currentId, onOpen, onSessio
 
   const handleFork = async (s: ChatSession) => {
     if (!s.current_message_id) {
-      setMsg('该会话没有当前位置，无法复制');
+      showToast('复制失败');
       return;
     }
     setBusyId(s.id);
-    setMsg(null);
     setMenu(null);
     try {
       const data = await fetchHistory(s.id);
@@ -113,24 +137,31 @@ export default function ConversationList({ sessions, currentId, onOpen, onSessio
       const idx = buildIndex(messages);
       const active = activePathOf(idx, data.chat_session.current_message_id);
       const share = await createShare(s.id, active);
-      const fork = await forkShare(share.share_id);
-      setMsg(`已复制 → 新会话 ${fork.chat_session_id.slice(0, 8)}`);
+      await forkShare(share.share_id);
+      showToast('复制成功');
       onSessionsChange();
     } catch (e: any) {
-      setMsg(`复制失败: ${e.message}`);
+      showToast('复制失败');
     } finally {
       setBusyId(null);
     }
   };
 
-  const handleDelete = async (s: ChatSession) => {
-    setBusyId(s.id);
+  const requestDelete = (s: ChatSession) => {
     setMenu(null);
+    setConfirmDelete(s);
+  };
+
+  const handleDelete = async () => {
+    const s = confirmDelete;
+    if (!s) return;
+    setBusyId(s.id);
     try {
       await deleteSession(s.id);
+      setConfirmDelete(null);
       onSessionsChange();
     } catch (e: any) {
-      setMsg(`删除失败: ${e.message}`);
+      showToast('删除失败');
     } finally {
       setBusyId(null);
     }
@@ -196,8 +227,6 @@ export default function ConversationList({ sessions, currentId, onOpen, onSessio
           placeholder="搜索对话内容..."
         />
       </div>
-
-      {msg && <div className="toast-msg">{msg}</div>}
 
       <div className="conv-scroll" ref={scrollRef}>
         {grouped.length === 0 && (
@@ -267,7 +296,7 @@ export default function ConversationList({ sessions, currentId, onOpen, onSessio
               <span>{busyId === s.id ? '复制中…' : '复制'}</span>
             </button>
             <div className="conv-menu-divider" />
-            <button className="conv-menu-item conv-menu-item-danger" onClick={() => handleDelete(s)}>
+            <button className="conv-menu-item conv-menu-item-danger" onClick={() => requestDelete(s)}>
               <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                 <polyline points="3 6 5 6 21 6" /><path d="M19 6l-1 14a2 2 0 01-2 2H8a2 2 0 01-2-2L5 6" /><path d="M10 11v6" /><path d="M14 11v6" /><path d="M9 6V4a1 1 0 011-1h4a1 1 0 011 1v2" />
               </svg>
@@ -276,6 +305,31 @@ export default function ConversationList({ sessions, currentId, onOpen, onSessio
           </div>
         );
       })()}
+      {toast &&
+        createPortal(
+          <div className={`toast-center${toastClosing ? ' toast-center--out' : ''}`}>{toast}</div>,
+          document.body,
+        )}
+      {confirmDelete &&
+        createPortal(
+          <div className="confirm-overlay" onClick={() => setConfirmDelete(null)}>
+            <div className="confirm-dialog" onClick={(e) => e.stopPropagation()}>
+              <div className="confirm-title">删除后，该对话将不可恢复</div>
+              <div className="confirm-desc">由该对话生成的分享链接也将失效</div>
+              <button
+                className="confirm-btn confirm-btn-danger"
+                disabled={busyId === confirmDelete.id}
+                onClick={handleDelete}
+              >
+                {busyId === confirmDelete.id ? '删除中…' : '删除该对话'}
+              </button>
+              <button className="confirm-btn confirm-btn-cancel" onClick={() => setConfirmDelete(null)}>
+                取消
+              </button>
+            </div>
+          </div>,
+          document.body,
+        )}
     </div>
   );
 }

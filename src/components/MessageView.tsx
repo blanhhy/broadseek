@@ -53,17 +53,23 @@ function Bubble({ m }: { m: NormalizedMessage }) {
   const isUser = m.role === 'USER';
   return (
     <div className={`msg-row ${isUser ? 'user' : 'ai'}`} id={`msg-${m.id}`}>
-      {!isUser && m.thinking && m.thinking.content && (
+      {!isUser && m.thinking && (
         <details className="msg-thinking">
           <summary>
-            <span>已思考{m.thinking.elapsed_secs ? `（用时 ${Math.round(m.thinking.elapsed_secs * 10) / 10} 秒）` : ''}</span>
+            <span>
+              {m.thinking.elapsed_secs != null
+                ? `已思考 ${Math.round(m.thinking.elapsed_secs * 10) / 10} 秒`
+                : '正在思考…'}
+            </span>
             <svg className="think-arrow" width="1em" height="1em" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
               <path d="M9 6l6 6-6 6" />
             </svg>
           </summary>
-          <div className="thinking-body">
-            <Markdown text={m.thinking.content} />
-          </div>
+          {m.thinking.content && (
+            <div className="thinking-body">
+              <Markdown text={m.thinking.content} />
+            </div>
+          )}
         </details>
       )}
       <div className="msg-bubble">

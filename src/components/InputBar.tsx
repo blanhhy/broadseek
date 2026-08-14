@@ -131,6 +131,27 @@ export default function InputBar({ sessionId }: Props) {
 
     try {
       const parser = new DeltaParser();
+      // 流式状态：实际下发使用扁平路径
+      //   response/thinking_content      → 思考内容（裸 {v} 事件依赖 p 跨事件持久化）
+      //   response/thinking_elapsed_secs → 思考结束耗时（SET）
+      //   response/content               → 正文内容
+      let seenThink = false; // 是否出现过思考（决定是否渲染思考块）
+      let thinkContent = '';
+      let thinkElapsed: number | null = null;
+      let bodyContent = '';
+      const applyStream = () => {
+        useConversation.setState((s) => ({
+          messages: s.messages.map((m) =>
+            m.id === tempAiId
+              ? {
+                  ...m,
+                  content: bodyContent,
+                  thinking: seenThink ? { content: thinkContent, elapsed_secs: thinkElapsed } : null,
+                }
+              : m,
+          ),
+        }));
+      };
       await sendCompletion(
         {
           chat_session_id: sessionId,
@@ -139,18 +160,24 @@ export default function InputBar({ sessionId }: Props) {
           prompt: t,
         },
         (ev) => {
-          // 官方增量格式：APPEND 到 .../content 的字符串即为回复正文增量
           for (const op of parser.parse(ev)) {
-            if (op.op === 'APPEND' && typeof op.value === 'string' && op.path.endsWith('/content')) {
-              if (op.value) {
-                useConversation.setState((s) => ({
-                  messages: s.messages.map((m) =>
-                    m.id === tempAiId ? { ...m, content: m.content + op.value } : m,
-                  ),
-                }));
+            const p = op.path;
+            const v = op.value;
+            if (p === 'response/thinking_content') {
+              if (typeof v === 'string') {
+                seenThink = true;
+                thinkContent = op.op === 'SET' ? v : thinkContent + v;
+              }
+            } else if (p === 'response/thinking_elapsed_secs' && typeof v === 'number') {
+              seenThink = true;
+              thinkElapsed = v;
+            } else if (p === 'response/content') {
+              if (typeof v === 'string') {
+                bodyContent = op.op === 'SET' ? v : bodyContent + v;
               }
             }
           }
+          applyStream();
         },
       );
       await refresh(); // 成功：用服务器真实数据替换临时消息
