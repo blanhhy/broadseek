@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import type { ChatSession } from '../core/api/types';
 import { createShare, deleteSession, forkShare, fetchHistory, normalizeMessage, renameSession } from '../core/api/client';
 import { activePathOf, buildIndex } from '../core/api/tree';
@@ -38,8 +38,20 @@ export default function ConversationList({ sessions, currentId, onOpen, onSessio
   const [keyword, setKeyword] = useState('');
   const [busyId, setBusyId] = useState<string | null>(null);
   const [msg, setMsg] = useState<string | null>(null);
-  const [menu, setMenu] = useState<{ id: string; x: number; y: number } | null>(null);
+  // 菜单：记录被长按项目相对 .drawer 的上下位置 + 侧栏尺寸，用于固定靠右、优先上方/下方
+  const [menu, setMenu] = useState<{
+    id: string;
+    itemTop: number;
+    itemBottom: number;
+    drawerHeight: number;
+  } | null>(null);
+  const [menuTop, setMenuTop] = useState(0);
   const menuRef = useRef<HTMLDivElement>(null);
+  const scrollRef = useRef<HTMLDivElement>(null);
+  // 内联重命名编辑状态（window.prompt 在部分环境被禁用，改用内联输入）
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [editValue, setEditValue] = useState('');
+  const editRef = useRef<HTMLInputElement>(null);
 
   // 点击外部关闭菜单
   useEffect(() => {
@@ -51,6 +63,20 @@ export default function ConversationList({ sessions, currentId, onOpen, onSessio
     };
     document.addEventListener('mousedown', handler);
     return () => document.removeEventListener('mousedown', handler);
+  }, [menu]);
+
+  // 菜单打开期间锁定列表滚动：否则列表滚动会让菜单停留在原地（移动端滚动必点击，天然规避）
+  useEffect(() => {
+    if (!menu) return;
+    const sc = scrollRef.current;
+    if (!sc) return;
+    const prevent = (e: Event) => e.preventDefault();
+    sc.addEventListener('wheel', prevent, { passive: false });
+    sc.addEventListener('touchmove', prevent, { passive: false });
+    return () => {
+      sc.removeEventListener('wheel', prevent);
+      sc.removeEventListener('touchmove', prevent);
+    };
   }, [menu]);
 
   const filtered = useMemo(() => {
@@ -111,18 +137,52 @@ export default function ConversationList({ sessions, currentId, onOpen, onSessio
   };
 
   const handleRename = (s: ChatSession) => {
-    const title = prompt('重命名对话', s.title || '');
-    if (title !== null && title.trim() && title !== s.title) {
-      renameSession(s.id, title.trim()).then(() => onSessionsChange());
-    }
+    setEditingId(s.id);
+    setEditValue(s.title || '');
     setMenu(null);
+  };
+
+  // 内联编辑提交：回车/失焦时保存
+  const submitRename = (s: ChatSession) => {
+    if (editingId !== s.id) return; // 已取消或已提交
+    const title = editValue.trim();
+    if (title && title !== s.title) {
+      renameSession(s.id, title).then(() => onSessionsChange());
+    }
+    setEditingId(null);
   };
 
   const openMenu = (e: React.MouseEvent, s: ChatSession) => {
     e.preventDefault();
     e.stopPropagation();
-    setMenu({ id: s.id, x: e.clientX, y: e.clientY });
+    const el = e.currentTarget as HTMLElement;
+    const drawer = el.closest('.drawer-left') as HTMLElement | null;
+    const iRect = el.getBoundingClientRect();
+    if (drawer) {
+      const dRect = drawer.getBoundingClientRect();
+      setMenu({
+        id: s.id,
+        itemTop: iRect.top - dRect.top,
+        itemBottom: iRect.bottom - dRect.top,
+        drawerHeight: dRect.height,
+      });
+    } else {
+      // 兜底：找不到侧栏时按常规绝对定位
+      setMenu({ id: s.id, itemTop: iRect.top, itemBottom: iRect.bottom, drawerHeight: 600 });
+    }
   };
+
+  // 菜单挂载后按实际高度校准 top：优先项目上方，上方空间不足则下方，再兜底不越界
+  useLayoutEffect(() => {
+    const el = menuRef.current;
+    if (!menu || !el) return;
+    const h = el.offsetHeight;
+    const MARGIN = 6;
+    let top = menu.itemTop - h - MARGIN; // 优先上方
+    if (top < 0) top = menu.itemBottom + MARGIN; // 上方不足 → 下方
+    if (top + h > menu.drawerHeight) top = menu.drawerHeight - h; // 兜底不超出侧栏
+    setMenuTop(Math.max(0, top));
+  }, [menu]);
 
   return (
     <div className="conv-list">
@@ -139,7 +199,7 @@ export default function ConversationList({ sessions, currentId, onOpen, onSessio
 
       {msg && <div className="toast-msg">{msg}</div>}
 
-      <div className="conv-scroll">
+      <div className="conv-scroll" ref={scrollRef}>
         {grouped.length === 0 && (
           <div className="conv-empty">暂无对话</div>
         )}
@@ -150,11 +210,27 @@ export default function ConversationList({ sessions, currentId, onOpen, onSessio
               <div
                 key={s.id}
                 className={`conv-item ${s.id === currentId ? 'active' : ''}`}
-                onClick={() => onOpen(s.id)}
+                onClick={() => { if (editingId !== s.id) onOpen(s.id); }}
                 onContextMenu={(e) => openMenu(e, s)}
               >
                 <div className="conv-item-title">
-                  {s.title || '未命名对话'}
+                  {editingId === s.id ? (
+                    <input
+                      ref={editRef}
+                      className="conv-item-edit"
+                      value={editValue}
+                      autoFocus
+                      onFocus={(e) => e.target.select()}
+                      onChange={(e) => setEditValue(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter') e.currentTarget.blur(); // 触发 onBlur 提交
+                        else if (e.key === 'Escape') setEditingId(null);
+                      }}
+                      onBlur={() => submitRename(s)}
+                    />
+                  ) : (
+                    s.title || '未命名对话'
+                  )}
                 </div>
                 <div className="conv-item-meta">
                   <span>{fmtTime(s.updated_at)}</span>
@@ -172,7 +248,7 @@ export default function ConversationList({ sessions, currentId, onOpen, onSessio
           <div
             ref={menuRef}
             className="conv-context-menu"
-            style={{ left: menu.x, top: menu.y }}
+            style={{ top: menuTop }}
           >
             <button className="conv-menu-item" onClick={() => handleRename(s)}>
               <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">

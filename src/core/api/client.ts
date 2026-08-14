@@ -245,10 +245,19 @@ export async function sendCompletion(
     'X-Ds-Pow-Response': powHeader,
     Authorization: `Bearer ${_token}`,
   };
+  // completion 必填字段：缺失任一会被服务端以 HTTP 422 拒绝，这里补全默认值（调用方可覆盖）
+  const fullBody = {
+    model_type: 'default',
+    ref_file_ids: [] as string[],
+    thinking_enabled: true,
+    search_enabled: true,
+    preempt: false,
+    ...body,
+  };
   const resp = await fetch(`${BASE}/chat/completion`, {
     method: 'POST',
     headers,
-    body: JSON.stringify(body),
+    body: JSON.stringify(fullBody),
     signal,
   });
   if (!resp.ok || !resp.body) {

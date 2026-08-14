@@ -1,20 +1,69 @@
-// 底部输入栏：发送消息（SSE 流式），完成后刷新整棵树
-
+// 底部输入栏：发送消息（乐观 UI：立即在对话页追加 User，流式生成 AI，失败撤回）
 import { useEffect, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { sendCompletion, fetchHistory, normalizeMessage } from '../core/api/client';
 import { useConversation } from '../core/store';
 import { buildIndex, activePathOf } from '../core/api/tree';
+import type { NormalizedMessage } from '../core/api/types';
+
+// 临时消息 id（负数自减，避免与服务器真实 id 冲突）
+let tempSeq = 0;
+function nextTempId(): number {
+  return --tempSeq;
+}
 
 interface Props {
   sessionId: string;
+}
+
+// 官方 completion SSE 增量解析（操作符格式，p/o 跨事件持久化）
+// 参考 raw-api-reference.md 的 DeltaParser
+class DeltaParser {
+  private op = 'SET';
+  private path = '';
+  parse(event: any): { path: string; op: string; value: any }[] {
+    let op = this.op = event.o ?? this.op;
+    let path = this.path = event.p ?? this.path;
+    if (op !== 'BATCH') return [{ path, op, value: event.v }];
+    const results: { path: string; op: string; value: any }[] = [];
+    for (const item of event.v) {
+      for (const s of this.parse(item)) {
+        s.path = (path ? path + '/' : '') + s.path;
+        results.push(s);
+      }
+    }
+    return results;
+  }
 }
 
 export default function InputBar({ sessionId }: Props) {
   const conv = useConversation();
   const [text, setText] = useState('');
   const [sending, setSending] = useState(false);
-  const [streaming, setStreaming] = useState('');
+  const [toast, setToast] = useState<string | null>(null);
+  const [toastClosing, setToastClosing] = useState(false);
   const taRef = useRef<HTMLTextAreaElement>(null);
+  const toastTimer = useRef<number | null>(null);
+  const closeTimer = useRef<number | null>(null);
+  useEffect(() => () => {
+    if (toastTimer.current) window.clearTimeout(toastTimer.current);
+    if (closeTimer.current) window.clearTimeout(closeTimer.current);
+  }, []);
+
+  // 显示居中 Toast（放大进入，约 1s 后缩小退出）
+  const showToast = (msg: string) => {
+    setToastClosing(false);
+    setToast(msg);
+    if (toastTimer.current) window.clearTimeout(toastTimer.current);
+    if (closeTimer.current) window.clearTimeout(closeTimer.current);
+    toastTimer.current = window.setTimeout(() => {
+      setToastClosing(true);
+      closeTimer.current = window.setTimeout(() => {
+        setToast(null);
+        setToastClosing(false);
+      }, 150);
+    }, 1000);
+  };
 
   // 随内容自动增高，达到 max-height 后内部滚动
   const autoResize = () => {
@@ -52,31 +101,74 @@ export default function InputBar({ sessionId }: Props) {
     if (!t || sending) return;
     setText('');
     setSending(true);
-    setStreaming('');
+
+    // 乐观 UI：立即在对话页追加一条 User 消息 + 空的 AI 消息
+    const tempUserId = nextTempId();
+    const tempAiId = nextTempId();
+    const now = Date.now() / 1000;
+    const base: Omit<NormalizedMessage, 'id' | 'parent_id' | 'role' | 'content'> = {
+      thinking: null,
+      model: '',
+      status: 'FINISHED',
+      token_usage: null,
+      thinking_enabled: false,
+      search_enabled: false,
+      ban_edit: false,
+      ban_regenerate: false,
+      files: [],
+      feedback: null,
+      search_results: null,
+      tips: [],
+      inserted_at: now,
+    };
+    const userMsg: NormalizedMessage = { ...base, id: tempUserId, parent_id: parentMessageId, role: 'USER', content: t };
+    const aiMsg: NormalizedMessage = { ...base, id: tempAiId, parent_id: tempUserId, role: 'ASSISTANT', content: '' };
+    useConversation.setState((s) => ({
+      messages: [...s.messages, userMsg, aiMsg],
+      activePath: [...s.activePath, tempUserId, tempAiId],
+      currentMessageId: tempAiId,
+    }));
+
     try {
+      const parser = new DeltaParser();
       await sendCompletion(
         {
           chat_session_id: sessionId,
           parent_message_id: parentMessageId,
+          model_type: conv.session?.model_type || 'default',
           prompt: t,
         },
         (ev) => {
-          const c = ev?.choices?.[0]?.delta?.content;
-          if (typeof c === 'string' && c) setStreaming((s) => s + c);
+          // 官方增量格式：APPEND 到 .../content 的字符串即为回复正文增量
+          for (const op of parser.parse(ev)) {
+            if (op.op === 'APPEND' && typeof op.value === 'string' && op.path.endsWith('/content')) {
+              if (op.value) {
+                useConversation.setState((s) => ({
+                  messages: s.messages.map((m) =>
+                    m.id === tempAiId ? { ...m, content: m.content + op.value } : m,
+                  ),
+                }));
+              }
+            }
+          }
         },
       );
-      await refresh();
+      await refresh(); // 成功：用服务器真实数据替换临时消息
     } catch (e: any) {
       console.error('发送失败', e);
+      // 失败：撤回临时 User + AI 消息，并 Toast 提示
+      useConversation.setState((s) => ({
+        messages: s.messages.filter((m) => m.id !== tempUserId && m.id !== tempAiId),
+        activePath: s.activePath.filter((id) => id !== tempUserId && id !== tempAiId),
+      }));
+      showToast('发送失败');
     } finally {
       setSending(false);
-      setStreaming('');
     }
   };
 
   return (
     <div className="input-bar">
-      {streaming && <div className="stream-preview">{streaming}</div>}
       <div className="input-card">
         <div className="input-textarea">
           <textarea
@@ -99,6 +191,11 @@ export default function InputBar({ sessionId }: Props) {
           </button>
         </div>
       </div>
+      {toast &&
+        createPortal(
+          <div className={`toast-center${toastClosing ? ' toast-center--out' : ''}`}>{toast}</div>,
+          document.body,
+        )}
     </div>
   );
 }

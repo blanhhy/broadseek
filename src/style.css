@@ -26,6 +26,9 @@
   --input-bg-hover: #2a2a33;
   --input-shadow: none;
   --dot-bg: #90909c;
+  /* Toast：背景与界面背景相反（深色界面用浅色，浅色界面用深色） */
+  --toast-bg: #ececef;
+  --toast-text: #191919;
   font: 16px/1.55 system-ui, 'Segoe UI', Roboto, -apple-system, sans-serif;
   color-scheme: dark;
   color: var(--text);
@@ -60,6 +63,8 @@
     --input-bg-hover: #ececef;
     --input-shadow: 0 2px 10px rgba(0, 0, 0, 0.12);
     --dot-bg: #c4c4cc;
+    --toast-bg: #2a2a30;
+    --toast-text: #f5f5f5;
     color-scheme: light;
   }
 }
@@ -251,6 +256,20 @@ textarea { font: inherit; resize: none; }
   white-space: nowrap;
   line-height: 1.3;
 }
+/* 会话标题内联重命名输入框 */
+.conv-item-edit {
+  width: 100%;
+  font: inherit;
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--text);
+  background: var(--bg-elev2);
+  border: 1px solid var(--border-strong);
+  border-radius: 6px;
+  padding: 2px 6px;
+  outline: none;
+}
+.conv-item-edit:focus { border-color: var(--accent); }
 .conv-item-meta {
   display: flex;
   align-items: center;
@@ -273,9 +292,12 @@ textarea { font: inherit; resize: none; }
 .fork-btn:hover { background: var(--bg-hover); color: var(--text); }
 .fork-btn:disabled { opacity: 0.5; }
 
-/* ── 会话右键菜单 ── */
+/* ── 会话右键菜单 ──
+   相对 .drawer（最近的定位祖先）定位：right 固定在侧栏靠右，不遮住左侧长按项目；
+   top 由组件内计算：优先项目上方，空间不足则下方。 */
 .conv-context-menu {
-  position: fixed;
+  position: absolute;
+  right: 8px;
   z-index: 100;
   background: var(--bg-elev);
   border: 1px solid var(--border);
@@ -317,6 +339,32 @@ textarea { font: inherit; resize: none; }
   background: var(--accent);
   color: #fff;
   font-size: 13px;
+}
+
+/* 屏幕居中的轻提示（复制/重新生成受限等反馈）：背景与界面相反、无描边、缩放动画 */
+.toast-center {
+  position: fixed;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  background: var(--toast-bg);
+  color: var(--toast-text);
+  border-radius: 10px;
+  padding: 9px 16px;
+  font-size: 13px;
+  z-index: 200;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
+  pointer-events: none;
+  animation: toast-in 0.18s ease;
+}
+.toast-center--out { animation: toast-out 0.15s ease forwards; }
+@keyframes toast-in {
+  from { transform: translate(-50%, -50%) scale(0.6); opacity: 0; }
+  to { transform: translate(-50%, -50%) scale(1); opacity: 1; }
+}
+@keyframes toast-out {
+  from { transform: translate(-50%, -50%) scale(1); opacity: 1; }
+  to { transform: translate(-50%, -50%) scale(0.6); opacity: 0; }
 }
 
 /* ── 分支列表（右） ── */
@@ -435,8 +483,8 @@ textarea { font: inherit; resize: none; }
 .msg-scroll {
   flex: 1;
   overflow-y: auto;
-  padding: 16px 24px 120px;
-  scroll-padding-bottom: 120px;
+  padding: 16px 24px 133px;
+  scroll-padding-bottom: 133px;
   display: flex;
   flex-direction: column;
   gap: 24px;
@@ -509,6 +557,35 @@ textarea { font: inherit; resize: none; }
   text-align: center;
   letter-spacing: 0.06em;
 }
+
+/* ── 最新 AI 消息操作行：左为分支切换器+复制，右为重新生成 ── */
+.msg-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  /* 贴近其所属 AI 消息：抵消 .msg-scroll 的 gap(24px)，留出约 6px */
+  margin-top: -18px;
+  padding: 0 2px;
+  color: var(--text-faint);
+}
+.msg-actions-left { display: flex; align-items: center; gap: 8px; }
+.msg-actions-right { display: flex; align-items: center; }
+/* 操作栏内嵌切换器与独立切换器水平对齐：抵消 .msg-actions 的 padding-left 2px */
+.msg-actions-left .branch-switcher { margin-left: -2px; }
+/* 操作行内嵌的分支切换器不再用负 margin 贴消息（由操作行统一留白） */
+.msg-actions .branch-switcher { margin-top: 0; }
+.msg-action-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 12px;
+  color: var(--text-faint);
+  padding: 2px 4px;
+  border-radius: 6px;
+}
+.msg-action-btn:hover:not(:disabled) { color: var(--text); background: var(--bg-hover); }
+.msg-action-btn:disabled { opacity: 0.4; cursor: default; }
 
 /* ── Markdown 渲染 ── */
 .markdown { font-size: 15px; line-height: 1.6; word-break: break-word; }
