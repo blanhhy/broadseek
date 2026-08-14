@@ -287,6 +287,85 @@ export async function sendCompletion(
   }
 }
 
+// 编辑消息重发（SSE 流式，与 completion 相同格式）
+export interface EditMessageBody {
+  chat_session_id: string;
+  message_id: number;
+  prompt: string;
+  search_enabled?: boolean;
+  thinking_enabled?: boolean;
+}
+
+export async function editMessage(
+  body: EditMessageBody,
+  onEvent: (obj: Record<string, any>) => void,
+  signal?: AbortSignal,
+): Promise<void> {
+  const powHeader = await withPow('/api/v0/chat/edit_message');
+  const headers: Record<string, string> = {
+    'Content-Type': 'application/json',
+    'User-Agent': navigator.userAgent,
+    'X-App-Version': '2025.04.25',
+    'X-Ds-Pow-Response': powHeader,
+    Authorization: `Bearer ${_token}`,
+  };
+  const fullBody = {
+    thinking_enabled: true,
+    search_enabled: true,
+    ...body,
+  };
+  const resp = await fetch(`${BASE}/chat/edit_message`, {
+    method: 'POST',
+    headers,
+    body: JSON.stringify(fullBody),
+    signal,
+  });
+  if (!resp.ok || !resp.body) {
+    // 尝试解析业务错误（edit_message 可能返回 JSON 而非 SSE）
+    try {
+      const errData = await resp.json();
+      const biz = errData?.data;
+      if (biz && biz.biz_code !== 0) {
+        throw new ApiError(biz.biz_msg || `业务错误 ${biz.biz_code}`, errData.code ?? -1, biz.biz_code);
+      }
+    } catch (e) {
+      if (e instanceof ApiError) throw e;
+    }
+    throw new ApiError(`edit_message HTTP ${resp.status}`);
+  }
+  // 检查 Content-Type：若返回 JSON 而非 SSE，说明是业务错误
+  const ct = resp.headers.get('content-type') ?? '';
+  if (ct.includes('application/json')) {
+    const errData = await resp.json();
+    const biz = errData?.data;
+    if (biz && biz.biz_code !== 0) {
+      throw new ApiError(biz.biz_msg || `业务错误 ${biz.biz_code}`, errData.code ?? -1, biz.biz_code);
+    }
+    throw new ApiError('edit_message 返回非预期格式');
+  }
+  const reader = resp.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = '';
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    buffer += decoder.decode(value, { stream: true });
+    let idx;
+    while ((idx = buffer.indexOf('\n')) >= 0) {
+      const line = buffer.slice(0, idx).trim();
+      buffer = buffer.slice(idx + 1);
+      if (!line.startsWith('data:')) continue;
+      const payload = line.slice(5).trim();
+      if (!payload || payload === '[DONE]') continue;
+      try {
+        onEvent(JSON.parse(payload));
+      } catch {
+        /* 忽略坏帧 */
+      }
+    }
+  }
+}
+
 // ── 消息规范化（history → 结构化）──
 export function normalizeMessage(m: ChatMessage): NormalizedMessage {
   const thinkingContent = m.thinking_content;

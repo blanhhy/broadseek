@@ -44,6 +44,8 @@ interface ConversationState {
   currentMessageId: number | null;
   loading: boolean;
   error: string | null;
+  editingMessageId: number | null; // 编辑重发模式：长按用户消息后设置
+  inputTall: boolean; // 输入框变高（多行/编辑提示条）：隐藏回到底部按钮
   setConversation: (sessionId: string | null) => void;
   setData: (d: {
     session: ChatSession | null;
@@ -54,6 +56,8 @@ interface ConversationState {
   setActivePath: (path: number[], currentMessageId: number | null) => void;
   setLoading: (b: boolean) => void;
   setError: (e: string | null) => void;
+  setEditingMessageId: (id: number | null) => void;
+  setInputTall: (b: boolean) => void;
 }
 
 export const useConversation = create<ConversationState>((set) => ({
@@ -64,10 +68,14 @@ export const useConversation = create<ConversationState>((set) => ({
   currentMessageId: null,
   loading: false,
   error: null,
+  editingMessageId: null,
   setConversation: (sessionId) => set({ sessionId }),
   setData: (d) => set({ ...d }),
   setActivePath: (activePath, currentMessageId) =>
     set({ activePath, currentMessageId }),
   setLoading: (loading) => set({ loading }),
   setError: (error) => set({ error }),
+  setEditingMessageId: (editingMessageId) => set({ editingMessageId }),
+  inputTall: false,
+  setInputTall: (inputTall) => set({ inputTall }),
 }));

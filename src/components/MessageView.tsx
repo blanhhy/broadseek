@@ -51,8 +51,32 @@ interface Props {
 
 function Bubble({ m }: { m: NormalizedMessage }) {
   const isUser = m.role === 'USER';
+  const setEditingMessageId = useConversation((s) => s.setEditingMessageId);
+  const activePath = useConversation((s) => s.activePath);
+
+  // 长按用户消息 → 编辑重发：将消息内容填入输入框
+  const handleEdit = () => {
+    if (!isUser || m.ban_edit) return;
+    // 找到该消息在活跃路径上的位置，确认它是当前路径上的消息
+    if (!activePath.includes(m.id)) return;
+    // 找到该用户消息对应的输入框（InputBar 监听 store 中 editingMessageId 变化）
+    setEditingMessageId(m.id);
+    // 将消息内容填入输入框
+    const textarea = document.querySelector('.input-card textarea') as HTMLTextAreaElement | null;
+    if (textarea) {
+      const setter = Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype, 'value')?.set;
+      setter?.call(textarea, m.content);
+      textarea.dispatchEvent(new Event('input', { bubbles: true }));
+      textarea.focus();
+    }
+  };
+
   return (
-    <div className={`msg-row ${isUser ? 'user' : 'ai'}`} id={`msg-${m.id}`}>
+    <div
+      className={`msg-row ${isUser ? 'user' : 'ai'}`}
+      id={`msg-${m.id}`}
+      onContextMenu={isUser && !m.ban_edit ? (e) => { e.preventDefault(); handleEdit(); } : undefined}
+    >
       {!isUser && m.thinking && (
         <details className="msg-thinking">
           <summary>
@@ -242,6 +266,7 @@ const MessageView = forwardRef<MessageViewHandle, Props>(function MessageView(
   const lastViewed = useRef<number | null>(null);
   const setActivePath = useConversation((s) => s.setActivePath);
   const setData = useConversation((s) => s.setData);
+  const inputTall = useConversation((s) => s.inputTall);
   const [visibleIds, setVisibleIds] = useState<number[]>([]);
   const [renderCount, setRenderCount] = useState(0);
   const [atBottom, setAtBottom] = useState(true);
@@ -595,7 +620,7 @@ const MessageView = forwardRef<MessageViewHandle, Props>(function MessageView(
           );
         })}
       </div>
-      {!atBottom && (
+      {!atBottom && !inputTall && (
         <button
           ref={btnRef}
           className="scroll-bottom-btn"

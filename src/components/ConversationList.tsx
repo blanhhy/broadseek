@@ -46,7 +46,7 @@ export default function ConversationList({ sessions, currentId, onOpen, onSessio
   useEffect(() => () => {
     if (toastTimer.current) window.clearTimeout(toastTimer.current);
     if (closeTimer.current) window.clearTimeout(closeTimer.current);
-  }, []);
+  }, [toastTimer, closeTimer]);
   const showToast = (text: string) => {
     setToastClosing(false);
     setToast(text);
@@ -161,6 +161,7 @@ export default function ConversationList({ sessions, currentId, onOpen, onSessio
       setConfirmDelete(null);
       onSessionsChange();
     } catch (e: any) {
+      // 删除失败：不关闭确认框，保留现场以便用户重试
       showToast('删除失败');
     } finally {
       setBusyId(null);

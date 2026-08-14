@@ -1,7 +1,7 @@
 // 底部输入栏：发送消息（乐观 UI：立即在对话页追加 User，流式生成 AI，失败撤回）
 import { useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { sendCompletion, fetchHistory, normalizeMessage } from '../core/api/client';
+import { sendCompletion, editMessage, fetchHistory, normalizeMessage, ApiError } from '../core/api/client';
 import { useConversation } from '../core/store';
 import { buildIndex, activePathOf } from '../core/api/tree';
 import type { NormalizedMessage } from '../core/api/types';
@@ -38,6 +38,9 @@ class DeltaParser {
 
 export default function InputBar({ sessionId }: Props) {
   const conv = useConversation();
+  const editingMessageId = useConversation((s) => s.editingMessageId);
+  const setEditingMessageId = useConversation((s) => s.setEditingMessageId);
+  const setInputTall = useConversation((s) => s.setInputTall);
   const [text, setText] = useState('');
   const [sending, setSending] = useState(false);
   const [toast, setToast] = useState<string | null>(null);
@@ -74,9 +77,14 @@ export default function InputBar({ sessionId }: Props) {
     ta.style.height = Math.min(ta.scrollHeight, MAX_H) + 'px';
     ta.style.overflowY = ta.scrollHeight > MAX_H ? 'auto' : 'hidden';
   };
+  // 文本变化后重算高度（渲染后 DOM 已更新，覆盖取消编辑/发送后清空等程序化变更路径）。
+  // 输入框变高（多行输入或编辑提示条撑高）时设置 inputTall，隐藏回到底部按钮。
   useEffect(() => {
     autoResize();
-  }, []);
+    const ta = taRef.current;
+    const tall = editingMessageId != null || (!!ta && ta.scrollHeight > 30); // 单行约 22px，阈值取 30
+    setInputTall(tall);
+  }, [text, editingMessageId]);
 
   // 当前活跃路径最后一条消息作为父节点（在其下新建分支）
   const parentMessageId = conv.activePath.length
@@ -102,7 +110,82 @@ export default function InputBar({ sessionId }: Props) {
     setText('');
     setSending(true);
 
-    // 乐观 UI：立即在对话页追加一条 User 消息 + 空的 AI 消息
+    // 编辑重发模式：用 edit_message 修改选中的用户消息
+    if (editingMessageId != null) {
+      const editId = editingMessageId;
+      setEditingMessageId(null);
+      // 乐观 UI：将该用户消息内容替换为新文本，其下 AI 消息清空等待流式
+      const oldAiId = conv.activePath[conv.activePath.indexOf(editId) + 1] ?? null;
+      const tempAiId = oldAiId ?? nextTempId();
+      useConversation.setState((s) => ({
+        messages: s.messages.map((m) =>
+          m.id === editId ? { ...m, content: t } : m,
+        ).map((m) =>
+          m.id === tempAiId ? { ...m, content: '', thinking: null } : m,
+        ),
+      }));
+
+      try {
+        const parser = new DeltaParser();
+        let seenThink = false;
+        let thinkContent = '';
+        let thinkElapsed: number | null = null;
+        let bodyContent = '';
+        const applyStream = () => {
+          useConversation.setState((s) => ({
+            messages: s.messages.map((m) =>
+              m.id === tempAiId
+                ? {
+                    ...m,
+                    content: bodyContent,
+                    thinking: seenThink ? { content: thinkContent, elapsed_secs: thinkElapsed } : null,
+                  }
+                : m,
+            ),
+          }));
+        };
+        await editMessage(
+          {
+            chat_session_id: sessionId,
+            message_id: editId,
+            prompt: t,
+          },
+          (ev) => {
+            for (const op of parser.parse(ev)) {
+              const p = op.path;
+              const v = op.value;
+              if (p === 'response/thinking_content') {
+                if (typeof v === 'string') {
+                  seenThink = true;
+                  thinkContent = op.op === 'SET' ? v : thinkContent + v;
+                }
+              } else if (p === 'response/thinking_elapsed_secs' && typeof v === 'number') {
+                seenThink = true;
+                thinkElapsed = v;
+              } else if (p === 'response/content') {
+                if (typeof v === 'string') {
+                  bodyContent = op.op === 'SET' ? v : bodyContent + v;
+                }
+              }
+            }
+            applyStream();
+          },
+        );
+        await refresh();
+      } catch (e: any) {
+        if (e instanceof ApiError && e.bizCode > 0) {
+          showToast('修改输入次数超过限制');
+        } else {
+          showToast('发送失败');
+        }
+        await refresh(); // 恢复原始数据
+      } finally {
+        setSending(false);
+      }
+      return;
+    }
+
+    // 普通发送：乐观 UI 追加 User + AI，流式生成
     const tempUserId = nextTempId();
     const tempAiId = nextTempId();
     const now = Date.now() / 1000;
@@ -197,15 +280,26 @@ export default function InputBar({ sessionId }: Props) {
   return (
     <div className="input-bar">
       <div className="input-card">
+        {editingMessageId != null && (
+          <div className="edit-banner">
+            <span>修改输入</span>
+            <button
+              className="edit-cancel"
+              aria-label="取消编辑"
+              onClick={() => { setEditingMessageId(null); setText(''); }}
+            >
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" aria-hidden="true">
+                <path d="M6 6l12 12M18 6L6 18" />
+              </svg>
+            </button>
+          </div>
+        )}
         <div className="input-textarea">
           <textarea
             ref={taRef}
             value={text}
-            onChange={(e) => {
-              setText(e.target.value);
-              autoResize();
-            }}
-            placeholder="发消息…"
+            onChange={(e) => setText(e.target.value)}
+            placeholder={editingMessageId != null ? '编辑消息…' : '发消息…'}
             rows={1}
           />
         </div>
