@@ -115,10 +115,12 @@ function BranchSwitcher({
   siblings,
   index,
   onSwitch,
+  disabled,
 }: {
   siblings: NormalizedMessage[];
   index: number;
   onSwitch: (targetId: number) => void;
+  disabled?: boolean;
 }) {
   const prev = siblings[index - 1];
   const next = siblings[index + 1];
@@ -126,7 +128,7 @@ function BranchSwitcher({
     <div className="branch-switcher">
       <button
         className="switcher-btn"
-        disabled={!prev}
+        disabled={!prev || disabled}
         onClick={() => prev && onSwitch(prev.id)}
         aria-label="上一条"
       >
@@ -137,7 +139,7 @@ function BranchSwitcher({
       <span className="switcher-label">{index + 1}／{siblings.length}</span>
       <button
         className="switcher-btn"
-        disabled={!next}
+        disabled={!next || disabled}
         onClick={() => next && onSwitch(next.id)}
         aria-label="下一条"
       >
@@ -267,6 +269,7 @@ const MessageView = forwardRef<MessageViewHandle, Props>(function MessageView(
   const setActivePath = useConversation((s) => s.setActivePath);
   const setData = useConversation((s) => s.setData);
   const inputTall = useConversation((s) => s.inputTall);
+  const streaming = useConversation((s) => s.streaming);
   const [visibleIds, setVisibleIds] = useState<number[]>([]);
   const [renderCount, setRenderCount] = useState(0);
   const [atBottom, setAtBottom] = useState(true);
@@ -328,6 +331,20 @@ const MessageView = forwardRef<MessageViewHandle, Props>(function MessageView(
   const handleCopy = useCallback(async (text: string) => {
     try { await navigator.clipboard.writeText(text); } catch { /* 剪贴板不可用时静默 */ }
   }, []);
+
+  // 编辑重发：路径在编辑点截断并追加虚拟分支（尾部为负 id 且短于旧路径），
+  // 以及流式结束后虚拟路径被服务器真实数据替换（上次尾部为负 id），
+  // 均视作分支切换：置位 forceFullRender 一次性渲染整条路径，避免 renderCount 重置导致视口内容突变
+  const prevPathRef = useRef<number[]>(activePath);
+  useEffect(() => {
+    const prev = prevPathRef.current;
+    prevPathRef.current = activePath;
+    const tail = activePath[activePath.length - 1];
+    const prevTail = prev[prev.length - 1];
+    if ((activePath.length < prev.length && tail !== undefined && tail < 0) || prevTail < 0) {
+      forceFullRender.current = true;
+    }
+  }, [activePath]);
 
   // 路径变化时重置首屏渲染数量
   useEffect(() => {
@@ -613,7 +630,12 @@ const MessageView = forwardRef<MessageViewHandle, Props>(function MessageView(
                 />
               ) : (
                 siblings.length > 1 && (
-                  <BranchSwitcher siblings={siblings} index={index} onSwitch={(t) => switchTo(m.id, t)} />
+                  <BranchSwitcher
+                    siblings={siblings}
+                    index={index}
+                    onSwitch={(t) => switchTo(m.id, t)}
+                    disabled={streaming && siblings.some((s) => s.id < 0)}
+                  />
                 )
               )}
             </Fragment>

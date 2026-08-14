@@ -41,6 +41,7 @@ export default function InputBar({ sessionId }: Props) {
   const editingMessageId = useConversation((s) => s.editingMessageId);
   const setEditingMessageId = useConversation((s) => s.setEditingMessageId);
   const setInputTall = useConversation((s) => s.setInputTall);
+  const setStreaming = useConversation((s) => s.setStreaming);
   const [text, setText] = useState('');
   const [sending, setSending] = useState(false);
   const [toast, setToast] = useState<string | null>(null);
@@ -109,20 +110,48 @@ export default function InputBar({ sessionId }: Props) {
     if (!t || sending) return;
     setText('');
     setSending(true);
+    setStreaming(true);
+    const now = Date.now() / 1000;
+    const base: Omit<NormalizedMessage, 'id' | 'parent_id' | 'role' | 'content'> = {
+      thinking: null,
+      model: '',
+      status: 'FINISHED',
+      token_usage: null,
+      thinking_enabled: false,
+      search_enabled: false,
+      ban_edit: false,
+      ban_regenerate: false,
+      files: [],
+      feedback: null,
+      search_results: null,
+      tips: [],
+      inserted_at: now,
+    };
 
     // 编辑重发模式：用 edit_message 修改选中的用户消息
     if (editingMessageId != null) {
       const editId = editingMessageId;
       setEditingMessageId(null);
-      // 乐观 UI：将该用户消息内容替换为新文本，其下 AI 消息清空等待流式
-      const oldAiId = conv.activePath[conv.activePath.indexOf(editId) + 1] ?? null;
-      const tempAiId = oldAiId ?? nextTempId();
+      const editMsg = conv.messages.find((m) => m.id === editId);
+      const editIdx = conv.activePath.indexOf(editId);
+      if (!editMsg || editIdx < 0) {
+        setSending(false);
+        setStreaming(false);
+        return;
+      }
+      // 乐观 UI：模拟 edit_message 在服务器创建新用户消息分支的行为——
+      // 原消息保持原样，追加虚拟用户消息（新文本）+ 虚拟 AI 消息承载流式，
+      // 路径切换到新虚拟分支（原分支下方消息不再显示，切换器数量 +1）。
+      const tempUserId = nextTempId();
+      const tempAiId = nextTempId();
       useConversation.setState((s) => ({
-        messages: s.messages.map((m) =>
-          m.id === editId ? { ...m, content: t } : m,
-        ).map((m) =>
-          m.id === tempAiId ? { ...m, content: '', thinking: null } : m,
-        ),
+        messages: [
+          ...s.messages,
+          { ...base, id: tempUserId, parent_id: editMsg.parent_id, role: 'USER', content: t },
+          { ...base, id: tempAiId, parent_id: tempUserId, role: 'ASSISTANT', content: '' },
+        ],
+        activePath: [...s.activePath.slice(0, editIdx), tempUserId, tempAiId],
+        currentMessageId: tempAiId,
       }));
 
       try {
@@ -181,6 +210,7 @@ export default function InputBar({ sessionId }: Props) {
         await refresh(); // 恢复原始数据
       } finally {
         setSending(false);
+        setStreaming(false);
       }
       return;
     }
@@ -188,22 +218,6 @@ export default function InputBar({ sessionId }: Props) {
     // 普通发送：乐观 UI 追加 User + AI，流式生成
     const tempUserId = nextTempId();
     const tempAiId = nextTempId();
-    const now = Date.now() / 1000;
-    const base: Omit<NormalizedMessage, 'id' | 'parent_id' | 'role' | 'content'> = {
-      thinking: null,
-      model: '',
-      status: 'FINISHED',
-      token_usage: null,
-      thinking_enabled: false,
-      search_enabled: false,
-      ban_edit: false,
-      ban_regenerate: false,
-      files: [],
-      feedback: null,
-      search_results: null,
-      tips: [],
-      inserted_at: now,
-    };
     const userMsg: NormalizedMessage = { ...base, id: tempUserId, parent_id: parentMessageId, role: 'USER', content: t };
     const aiMsg: NormalizedMessage = { ...base, id: tempAiId, parent_id: tempUserId, role: 'ASSISTANT', content: '' };
     useConversation.setState((s) => ({
@@ -274,6 +288,7 @@ export default function InputBar({ sessionId }: Props) {
       showToast('发送失败');
     } finally {
       setSending(false);
+      setStreaming(false);
     }
   };
 

@@ -46,6 +46,7 @@ interface ConversationState {
   error: string | null;
   editingMessageId: number | null; // 编辑重发模式：长按用户消息后设置
   inputTall: boolean; // 输入框变高（多行/编辑提示条）：隐藏回到底部按钮
+  streaming: boolean; // 流式响应进行中（含虚拟分支时禁用切换器）
   setConversation: (sessionId: string | null) => void;
   setData: (d: {
     session: ChatSession | null;
@@ -58,6 +59,7 @@ interface ConversationState {
   setError: (e: string | null) => void;
   setEditingMessageId: (id: number | null) => void;
   setInputTall: (b: boolean) => void;
+  setStreaming: (b: boolean) => void;
 }
 
 export const useConversation = create<ConversationState>((set) => ({
@@ -78,4 +80,6 @@ export const useConversation = create<ConversationState>((set) => ({
   setEditingMessageId: (editingMessageId) => set({ editingMessageId }),
   inputTall: false,
   setInputTall: (inputTall) => set({ inputTall }),
+  streaming: false,
+  setStreaming: (streaming) => set({ streaming }),
 }));
