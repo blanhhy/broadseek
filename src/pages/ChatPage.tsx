@@ -64,7 +64,7 @@ export default function ChatPage() {
           </svg>
         </button>
         <div className="topbar-title">
-          {conv.session?.title || (isOpen ? '未命名对话' : '对话')}
+          {conv.session?.title || (isOpen ? '未命名对话' : '')}
         </div>
         <div className="topbar-actions">
           {isOpen && (
@@ -111,14 +111,8 @@ export default function ChatPage() {
       <main className="chat-main">
         {!isOpen ? (
           <div className="welcome">
-            <div className="welcome-logo">
-              <svg width="56" height="56" viewBox="0 0 24 24" fill="none">
-                <path d="M12 2C6.5 2 2 6.5 2 12s4.5 10 10 10 10-4.5 10-10S17.5 2 12 2z" fill="#4D6BFE" />
-                <path d="M12 6a6 6 0 100 12 6 6 0 000-12zm0 9a3 3 0 110-6 3 3 0 010 6z" fill="#fff" />
-              </svg>
-            </div>
-            <h2>选择或开始一段对话</h2>
-            <p>从左侧列表选择已有对话</p>
+            <h2>还未选择对话</h2>
+            <p>打开左侧栏选择已有对话</p>
           </div>
         ) : (
           <MessageView
