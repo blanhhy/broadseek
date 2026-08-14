@@ -25,6 +25,7 @@
   --input-ph: #90909c;
   --input-bg-hover: #2a2a33;
   --input-shadow: none;
+  --dot-bg: #90909c;
   font: 16px/1.55 system-ui, 'Segoe UI', Roboto, -apple-system, sans-serif;
   color-scheme: dark;
   color: var(--text);
@@ -58,6 +59,7 @@
     --input-ph: #9a9aa3;
     --input-bg-hover: #ececef;
     --input-shadow: 0 2px 10px rgba(0, 0, 0, 0.12);
+    --dot-bg: #c4c4cc;
     color-scheme: light;
   }
 }
@@ -395,7 +397,7 @@ textarea { font: inherit; resize: none; }
 .msg-scroll {
   flex: 1;
   overflow-y: auto;
-  padding: 16px 24px 24px;
+  padding: 16px 24px 104px;
   display: flex;
   flex-direction: column;
   gap: 24px;
@@ -542,22 +544,21 @@ textarea { font: inherit; resize: none; }
   transform: translateY(-50%);
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: 15px;
   z-index: 15;
 }
 .dot {
   position: relative;
-  width: 8px;
-  height: 8px;
+  padding: 0;
+  width: 10px;
+  height: 10px;
   border-radius: 50%;
-  background: var(--border-strong);
+  background: var(--dot-bg);
   transition: transform 0.15s;
 }
-.dot-user { background: var(--accent); }
-.dot-ai { background: var(--border-strong); }
 .dot-current {
-  box-shadow: 0 0 0 3px var(--accent-bg);
   background: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-bg);
 }
 .dot:hover { transform: scale(1.35); }
 .dot-preview {
@@ -581,11 +582,30 @@ textarea { font: inherit; resize: none; }
 }
 .dot:hover .dot-preview { opacity: 1; transform: translateY(-50%) translateX(0); }
 
-/* ── 输入栏 ── */
+/* ── 输入栏：透明背景，覆盖在消息区底部，仅圆角卡片遮挡对话 ── */
 .input-bar {
-  flex: 0 0 auto;
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
   padding: 10px 14px 16px;
+  background: transparent;
+  z-index: 12;
+}
+/* 圆角卡片后方的遮挡层：与背景同色、高度一半，遮住从卡片下方漏出的消息内容 */
+.input-bar::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 50%;
   background: var(--bg);
+  z-index: 0;
+}
+.input-card {
+  position: relative;
+  z-index: 1;
 }
 .stream-preview {
   margin-bottom: 8px;
@@ -646,7 +666,7 @@ textarea { font: inherit; resize: none; }
 .msg-wrap .scroll-bottom-btn {
   position: absolute;
   right: 24px;
-  bottom: 16px;
+  bottom: 112px;
   width: 30px;
   height: 30px;
   border-radius: 50%;
