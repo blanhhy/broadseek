@@ -435,8 +435,8 @@ textarea { font: inherit; resize: none; }
 .msg-scroll {
   flex: 1;
   overflow-y: auto;
-  padding: 16px 24px 104px;
-  scroll-padding-bottom: 104px;
+  padding: 16px 24px 120px;
+  scroll-padding-bottom: 120px;
   display: flex;
   flex-direction: column;
   gap: 24px;
@@ -489,8 +489,9 @@ textarea { font: inherit; resize: none; }
   display: flex;
   align-items: center;
   gap: 6px;
-  margin: 0px 0 16px;
   color: var(--text-faint);
+  /* 贴近其所属消息：抵消 .msg-scroll 的 gap(24px)，留出约 6px */
+  margin-top: -18px;
 }
 .msg-row.user + .branch-switcher { justify-content: flex-end; }
 .switcher-btn {
