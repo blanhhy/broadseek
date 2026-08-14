@@ -63,7 +63,7 @@ export default function InputBar({ sessionId }: Props) {
   return (
     <div className="input-bar">
       {streaming && <div className="stream-preview">{streaming}</div>}
-      <div className="input-row">
+      <div className="input-card">
         <textarea
           value={text}
           onChange={(e) => setText(e.target.value)}
@@ -76,12 +76,14 @@ export default function InputBar({ sessionId }: Props) {
             }
           }}
         />
-        <button className="send-btn" onClick={send} disabled={!text.trim() || sending}>
-          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
-            <path d="M12 20V4" />
-            <path d="M5 11l7-7 7 7" />
-          </svg>
-        </button>
+        <div className="input-card-footer">
+          <button className="send-btn" onClick={send} disabled={!text.trim() || sending}>
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M12 20V4" />
+              <path d="M5 11l7-7 7 7" />
+            </svg>
+          </button>
+        </div>
       </div>
     </div>
   );

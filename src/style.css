@@ -17,6 +17,14 @@
   --user-bubble: #333333;
   --ai-bubble: #1b1b22;
   --danger: #ff5c5c;
+  --code-bg: #1f2028;
+  /* 输入框 / 回到底部按钮：深色模式用深灰背景 + 浅灰描边 */
+  --input-bg: #1d1d24;
+  --input-border: #34343e;
+  --input-text: #f8f8f8;
+  --input-ph: #90909c;
+  --input-bg-hover: #2a2a33;
+  --input-shadow: none;
   font: 16px/1.55 system-ui, 'Segoe UI', Roboto, -apple-system, sans-serif;
   color-scheme: dark;
   color: var(--text);
@@ -43,11 +51,22 @@
     --user-bubble: #edf3fe;
     --ai-bubble: #ffffff;
     --danger: #e5484d;
+    --code-bg: #f2f2f4;
+    --input-bg: #ffffff;
+    --input-border: #e6e6ea;
+    --input-text: #191919;
+    --input-ph: #9a9aa3;
+    --input-bg-hover: #ececef;
+    --input-shadow: 0 2px 10px rgba(0, 0, 0, 0.12);
     color-scheme: light;
   }
 }
 
 * { box-sizing: border-box; }
+
+/* 隐藏所有滚动条（保留滚动功能） */
+*::-webkit-scrollbar { display: none; }
+* { scrollbar-width: none; -ms-overflow-style: none; }
 
 html, body, #root { height: 100%; margin: 0; }
 
@@ -183,10 +202,10 @@ textarea { font: inherit; resize: none; }
   align-items: center;
   gap: 6px;
   margin: 10px 12px;
-  padding: 8px 10px;
+  padding: 10px 10px;
   background: var(--bg-elev2);
-  border: 1px solid var(--border);
-  border-radius: 10px;
+  border: 0;
+  border-radius: 24px;
   color: var(--text-dim);
 }
 .drawer-search input {
@@ -365,13 +384,21 @@ textarea { font: inherit; resize: none; }
 .welcome h2 { margin: 0; font-size: 20px; color: var(--text); }
 .welcome p { margin: 0; font-size: 14px; }
 
+.msg-wrap {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
 .msg-scroll {
   flex: 1;
   overflow-y: auto;
   padding: 16px 24px 24px;
   display: flex;
   flex-direction: column;
-  gap: 14px;
+  gap: 24px;
 }
 .msg-state {
   text-align: center;
@@ -400,18 +427,19 @@ textarea { font: inherit; resize: none; }
   font-size: 15px;
   line-height: 1.6;
   overflow-wrap: anywhere;
-  white-space: pre-wrap;
 }
 .msg-row.user .msg-bubble {
   background: var(--user-bubble);
   color: var(--text);
   border-bottom-right-radius: 6px;
+  white-space: pre-wrap;
 }
 .msg-row.ai .msg-bubble {
   background: transparent;
   border: none;
   color: var(--text);
   padding: 2px 0;
+  max-width: 100%;
 }
 .msg-tags { margin-top: 6px; font-size: 12px; color: var(--text-dim); }
 
@@ -425,14 +453,15 @@ textarea { font: inherit; resize: none; }
 }
 .msg-row.user + .branch-switcher { justify-content: flex-end; }
 .switcher-btn {
-  width: 22px;
-  height: 22px;
+  width: 28px;
+  height: 28px;
   display: inline-flex;
   align-items: center;
   justify-content: center;
   color: var(--text-dim);
+  border-radius: 6px;
 }
-.switcher-btn:hover:not(:disabled) { background: var(--bg-hover); color: var(--text); }
+.switcher-btn:hover:not(:disabled) { color: var(--text); }
 .switcher-btn:disabled { opacity: 0.35; cursor: default; }
 .switcher-label { font-size: 12px; text-align: center; }
 
@@ -495,11 +524,12 @@ textarea { font: inherit; resize: none; }
   margin-bottom: 6px;
   font-size: 13px;
   color: var(--text-faint);
+  border-left: 3px solid var(--border-strong);
+  padding-left: 12px;
 }
 .thinking-body {
   margin-top: 6px;
   color: var(--text-dim);
-  white-space: pre-wrap;
   overflow-wrap: anywhere;
   font-size: 13px;
 }
@@ -555,7 +585,6 @@ textarea { font: inherit; resize: none; }
 .input-bar {
   flex: 0 0 auto;
   padding: 10px 14px 16px;
-  border-top: 1px solid var(--border);
   background: var(--bg);
 }
 .stream-preview {
@@ -569,31 +598,39 @@ textarea { font: inherit; resize: none; }
   max-height: 120px;
   overflow-y: auto;
 }
-.input-row {
+/* 2 行高的圆角卡片：第一行可输入，第二行末放发送按钮 */
+.input-card {
   display: flex;
-  align-items: flex-end;
-  gap: 8px;
-  background: var(--bg-elev2);
-  border: 1px solid var(--border);
-  border-radius: 24px;
-  padding: 8px 8px;
+  flex-direction: column;
+  margin: 0 6px;
+  background: var(--input-bg);
+  border: 1px solid var(--input-border);
+  border-radius: 16px;
+  box-shadow: var(--input-shadow);
+  overflow: hidden;
 }
-.input-row:focus-within { border-color: var(--accent); }
-.input-row textarea {
+.input-card textarea {
   flex: 1;
   background: none;
   border: none;
   outline: none;
-  color: var(--text);
+  color: var(--input-text);
   font-size: 15px;
-  line-height: 1.5;
-  max-height: 140px;
-  padding: 6px 10px;
+  line-height: 1.4;
+  padding: 10px 14px 2px;
+  resize: none;
+  overflow-y: auto;
 }
-.input-row textarea::placeholder { color: var(--text-faint); }
+.input-card textarea::placeholder { color: var(--input-ph); }
+.input-card-footer {
+  display: flex;
+  justify-content: flex-end;
+  align-items: center;
+  padding: 4px 14px 10px;
+}
 .send-btn {
-  width: 34px;
-  height: 34px;
+  width: 30px;
+  height: 30px;
   flex: 0 0 auto;
   border-radius: 50%;
   background: var(--accent);
@@ -603,3 +640,24 @@ textarea { font: inherit; resize: none; }
   justify-content: center;
 }
 .send-btn:disabled { opacity: 0.45; cursor: default; }
+
+/* 回到底部按钮：悬浮在输入框右侧上方，与输入框同色（较深灰背景 + 浅灰描边，无阴影）。
+   right 由 MessageView 动态设为 24px + 滚动条宽度，此处 24px 兜底 */
+.msg-wrap .scroll-bottom-btn {
+  position: absolute;
+  right: 24px;
+  bottom: 16px;
+  width: 30px;
+  height: 30px;
+  border-radius: 50%;
+  background: var(--input-bg);
+  border: 1px solid var(--input-border);
+  color: var(--input-text);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: var(--input-shadow);
+  z-index: 16;
+}
+.msg-wrap .scroll-bottom-btn:hover,
+.msg-wrap .scroll-bottom-btn:active { background: var(--input-bg-hover); }

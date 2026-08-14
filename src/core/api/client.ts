@@ -47,9 +47,11 @@ async function request<T>(
     body?: unknown;
     query?: Record<string, string | number | undefined>;
     powHeader?: string;
+    headers?: Record<string, string>;
+    skipPlatform?: boolean;
   } = {},
 ): Promise<T> {
-  const { method = 'GET', body, query, powHeader } = options;
+  const { method = 'GET', body, query, powHeader, headers: extraHeaders, skipPlatform } = options;
   const url = new URL(BASE + path, window.location.origin);
   if (query) {
     for (const [k, v] of Object.entries(query)) {
@@ -61,11 +63,14 @@ async function request<T>(
     'Content-Type': 'application/json',
     'User-Agent': 'Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36 Chrome/126 Mobile Safari/537.36',
     'X-App-Version': '2025.04.25',
-    'X-Client-Platform': 'web',
     'X-Client-Locale': 'zh_CN',
     Origin: 'https://chat.deepseek.com',
     Referer: 'https://chat.deepseek.com/',
   };
+  // X-Client-Platform: web 会让 fetch_page 返回精简会话（缺 pinned 等字段），
+  // 需要完整会话字段的端点用 skipPlatform 跳过该头。
+  if (!skipPlatform) headers['X-Client-Platform'] = 'web';
+  if (extraHeaders) Object.assign(headers, extraHeaders);
   if (_token) headers['Authorization'] = `Bearer ${_token}`;
   if (powHeader) headers['X-Ds-Pow-Response'] = powHeader;
 
@@ -102,23 +107,55 @@ async function request<T>(
 // ── 端点 ──
 
 // 会话列表（游标分页）
-export function fetchSessionsPage(opts: {
-  count?: number;
-  cursorPinned?: boolean;
-  cursorUpdatedAt?: number;
-} = {}) {
-  const { count = 50, cursorPinned, cursorUpdatedAt } = opts;
+// 分页游标为 before_seq_id：取「seq_id 小于该值」的更早会话。
+// （实测 lte_cursor.updated_at / lte_cursor.pinned 等参数被服务端忽略，
+//  始终返回第一页；只有 before_seq_id 能正确前进。）
+export function fetchSessionsPage(opts: { count?: number; beforeSeqId?: number } = {}) {
+  const { count = 50, beforeSeqId } = opts;
   return request<{ chat_sessions: ChatSession[]; has_more: boolean }>(
     '/chat_session/fetch_page',
     {
+      skipPlatform: true,
       query: {
         count,
-        ...(cursorUpdatedAt !== undefined
-          ? { 'lte_cursor.pinned': cursorPinned ? 1 : 0, 'lte_cursor.updated_at': cursorUpdatedAt }
-          : {}),
+        ...(beforeSeqId !== undefined ? { before_seq_id: beforeSeqId } : {}),
       },
     },
   );
+}
+
+// 拉取全部会话（before_seq_id 游标分页循环 + 去重 + 防环）
+export async function fetchAllSessions(opts: { count?: number } = {}): Promise<ChatSession[]> {
+  const { count = 100 } = opts;
+  const sessions: ChatSession[] = [];
+  const seenIds = new Set<string>();
+  const seenCursors = new Set<number | null>();
+  seenCursors.add(null);
+  let beforeSeqId: number | null = null;
+
+  for (let i = 0; i < 100; i++) {
+    const data = await fetchSessionsPage({
+      count,
+      ...(beforeSeqId != null ? { beforeSeqId } : {}),
+    });
+    const list = data.chat_sessions;
+    let added = 0;
+    for (const s of list) {
+      if (!s.id || seenIds.has(s.id)) continue;
+      seenIds.add(s.id);
+      sessions.push(s);
+      added++;
+    }
+
+    if (!data.has_more || list.length === 0) break;
+    if (added === 0) break;
+    const last = list[list.length - 1];
+    if (last.seq_id == null || seenCursors.has(last.seq_id)) break;
+    seenCursors.add(last.seq_id);
+    beforeSeqId = last.seq_id;
+  }
+
+  return sessions;
 }
 
 // 读取会话全部消息（一次返回整棵树，无分页）

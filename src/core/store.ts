@@ -46,7 +46,7 @@ interface ConversationState {
   error: string | null;
   setConversation: (sessionId: string | null) => void;
   setData: (d: {
-    session: ChatSession;
+    session: ChatSession | null;
     messages: NormalizedMessage[];
     activePath: number[];
     currentMessageId: number | null;

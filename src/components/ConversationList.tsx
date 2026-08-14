@@ -18,6 +18,7 @@ function groupLabel(s: ChatSession): string {
   const dayMs = 86400000;
   if (s.pinned) return '置顶';
   if (ts >= today) return '今天';
+  if (ts >= today - dayMs) return '昨天';
   if (ts >= today - 7 * dayMs) return '7 天内';
   if (ts >= today - 30 * dayMs) return '30 天内';
   return '更早';
@@ -85,12 +86,12 @@ export default function ConversationList({ sessions, currentId, onOpen }: Props)
     <div className="conv-list">
       <div className="drawer-search">
         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-          <circle cx="11" cy="11" r="7" /><path d="M21 21l-4-4" strokeLinecap="round" />
+          <circle cx="9" cy="9" r="8" /><path d="M21 21l-4-4" strokeLinecap="round" />
         </svg>
         <input
           value={keyword}
           onChange={(e) => setKeyword(e.target.value)}
-          placeholder="搜索对话"
+          placeholder="搜索对话内容..."
         />
       </div>
 
@@ -118,7 +119,7 @@ export default function ConversationList({ sessions, currentId, onOpen }: Props)
                     className="fork-btn"
                     disabled={busyId === s.id}
                     onClick={(e) => { e.stopPropagation(); handleFork(s); }}
-                    title="复制（fork 当前路径）"
+                    title="对话 Fork"
                   >
                     {busyId === s.id ? '…' : (
                       <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">

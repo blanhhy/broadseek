@@ -3,6 +3,7 @@
 // ── 会话 ──
 export interface ChatSession {
   id: string;
+  seq_id: number;
   title: string | null;
   model_type: string;
   pinned: boolean;

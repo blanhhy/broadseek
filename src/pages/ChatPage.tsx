@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { useAuth, useConversation } from '../core/store';
-import { fetchSessionsPage, fetchHistory, normalizeMessage } from '../core/api/client';
+import { fetchAllSessions, fetchHistory, normalizeMessage } from '../core/api/client';
 import type { ChatSession } from '../core/api/types';
 import { buildIndex, activePathOf } from '../core/api/tree';
 import ConversationList from '../components/ConversationList';
@@ -9,6 +9,15 @@ import MessageView, { type MessageViewHandle } from '../components/MessageView';
 import FloatingDots from '../components/FloatingDots';
 import InputBar from '../components/InputBar';
 
+// 会话内缓存：避免重复拉取 & 切换回已开过的会话时秒开
+interface SessionCache {
+  session: ChatSession | null;
+  messages: ReturnType<typeof normalizeMessage>[];
+  activePath: number[];
+  currentMessageId: number | null;
+}
+const sessionCache = new Map<string, SessionCache>();
+
 export default function ChatPage() {
   const token = useAuth((s) => s.token);
   const logout = useAuth((s) => s.logout);
@@ -16,39 +25,62 @@ export default function ChatPage() {
   const [sessions, setSessions] = useState<ChatSession[]>([]);
   const [leftOpen, setLeftOpen] = useState(true); // 默认展开会话列表
   const [rightOpen, setRightOpen] = useState(false);
+  const [visibleIds, setVisibleIds] = useState<number[]>([]);
   const listRef = useRef<MessageViewHandle>(null);
+  const reqSeq = useRef(0); // 竞态保护：只接受最后一次请求的结果
 
   const conv = useConversation();
 
-  // 加载会话列表
+  // 加载全部会话
   useEffect(() => {
-    fetchSessionsPage({ count: 100 })
-      .then((d) => setSessions(d.chat_sessions))
+    fetchAllSessions({ count: 100 })
+      .then((d) => setSessions(d))
       .catch((e) => console.error('加载会话失败', e));
   }, [token]);
 
-  // 打开会话：拉取全部消息并解析
+  // 打开会话：优先命中缓存，否则拉取全部消息并解析
   const openSession = async (id: string) => {
+    const seq = ++reqSeq.current;
     setRightOpen(false);
-    setLeftOpen(false);
     conv.setConversation(id);
+
+    // 命中缓存：直接秒开，不再请求
+    const cached = sessionCache.get(id);
+    if (cached) {
+      setLeftOpen(false);
+      conv.setLoading(false);
+      conv.setError(null);
+      conv.setData(cached);
+      return;
+    }
+
+    // 未命中：先清空旧内容进入加载态，避免停留在上一会话的画面
     conv.setLoading(true);
     conv.setError(null);
+    conv.setData({ session: null, messages: [], activePath: [], currentMessageId: null });
     try {
       const data = await fetchHistory(id);
+      if (seq !== reqSeq.current) return; // 已被更新的切换取代
       const messages = data.chat_messages.map(normalizeMessage);
       const idx = buildIndex(messages);
       const active = activePathOf(idx, data.chat_session.current_message_id);
-      conv.setData({
+      const payload: SessionCache = {
         session: data.chat_session,
         messages,
         activePath: active,
         currentMessageId: data.chat_session.current_message_id,
-      });
+      };
+      sessionCache.set(id, payload);
+      if (seq !== reqSeq.current) return;
+      conv.setData(payload);
     } catch (e: any) {
+      if (seq !== reqSeq.current) return;
       conv.setError(e.message || '加载失败');
     } finally {
-      conv.setLoading(false);
+      if (seq === reqSeq.current) {
+        conv.setLoading(false);
+        setLeftOpen(false);
+      }
     }
   };
 
@@ -123,6 +155,7 @@ export default function ChatPage() {
             loading={conv.loading}
             error={conv.error}
             onOpenBranch={() => setRightOpen(true)}
+            onVisibleChange={setVisibleIds}
           />
         )}
 
@@ -130,7 +163,7 @@ export default function ChatPage() {
           <>
             <FloatingDots
               messages={conv.messages}
-              activePath={conv.activePath}
+              visibleIds={visibleIds}
               currentMessageId={conv.currentMessageId}
               onJump={(id) => listRef.current?.scrollToMessage(id)}
             />
