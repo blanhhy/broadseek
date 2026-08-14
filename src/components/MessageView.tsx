@@ -1,7 +1,7 @@
 // 主聊天区：按活跃路径顺序展示消息，支持加载/错误态与滚动定位
 // 每个消息若存在同父兄弟（分支），下方显示"X/Y"切换器
 
-import { Fragment, forwardRef, memo, useCallback, useEffect, useImperativeHandle, useMemo, useRef, useState } from 'react';
+import { Fragment, forwardRef, memo, useCallback, useEffect, useImperativeHandle, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import type { NormalizedMessage } from '../core/api/types';
 import { buildIndex, branchSiblings, switchBranchPath } from '../core/api/tree';
 import { updateCurrentMessage } from '../core/api/client';
@@ -12,6 +12,9 @@ import FileAttachments from './FileAttachments';
 // 分批渲染：首屏只渲染前 BATCH 条，其余在浏览器空闲时分批补齐，
 // 避免长会话一次性渲染所有 markdown 造成长时间阻塞。
 const BATCH = 20;
+
+// 输入卡片覆盖在消息区底部的高度：定位/可视判断时视口高度应扣除它，避免被输入框遮挡
+const INPUT_OVERLAY = 104;
 
 function scheduleIdle(fn: () => void, timeout = 300) {
   const w = window as any;
@@ -42,6 +45,7 @@ interface Props {
   error: string | null;
   onOpenBranch: () => void;
   onVisibleChange?: (ids: number[]) => void;
+  onViewedChange?: (id: number | null) => void;
 }
 
 function Bubble({ m }: { m: NormalizedMessage }) {
@@ -50,7 +54,12 @@ function Bubble({ m }: { m: NormalizedMessage }) {
     <div className={`msg-row ${isUser ? 'user' : 'ai'}`} id={`msg-${m.id}`}>
       {!isUser && m.thinking && m.thinking.content && (
         <details className="msg-thinking">
-          <summary>已思考（用时 {m.thinking.elapsed_secs ? `${Math.round(m.thinking.elapsed_secs * 10) / 10}` : ''} 秒）</summary>
+          <summary>
+            <span>已思考{m.thinking.elapsed_secs ? `（用时 ${Math.round(m.thinking.elapsed_secs * 10) / 10} 秒）` : ''}</span>
+            <svg className="think-arrow" width="1em" height="1em" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+              <path d="M9 6l6 6-6 6" />
+            </svg>
+          </summary>
           <div className="thinking-body">
             <Markdown text={m.thinking.content} />
           </div>
@@ -90,19 +99,19 @@ function BranchSwitcher({
         onClick={() => prev && onSwitch(prev.id)}
         aria-label="上一条"
       >
-        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
-          <path d="M15 18l-6-6 6-6" />
+        <svg width="10" height="10" viewBox="0 0 10 12" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+          <path d="M7 1.5L2.5 6 7 10.5" />
         </svg>
       </button>
-      <span className="switcher-label">{index + 1}/{siblings.length}</span>
+      <span className="switcher-label">{index + 1}／{siblings.length}</span>
       <button
         className="switcher-btn"
         disabled={!next}
         onClick={() => next && onSwitch(next.id)}
         aria-label="下一条"
       >
-        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
-          <path d="M9 6l6 6-6 6" />
+        <svg width="10" height="10" viewBox="0 0 10 12" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+          <path d="M3 1.5L7.5 6 3 10.5" />
         </svg>
       </button>
     </div>
@@ -110,13 +119,14 @@ function BranchSwitcher({
 }
 
 const MessageView = forwardRef<MessageViewHandle, Props>(function MessageView(
-  { sessionId, messages, activePath, loading, error, onOpenBranch, onVisibleChange },
+  { sessionId, messages, activePath, loading, error, onOpenBranch, onVisibleChange, onViewedChange },
   ref,
 ) {
   const scrollRef = useRef<HTMLDivElement>(null);
   const rafRef = useRef<number | null>(null);
   const lastReported = useRef<string>('');
   const lastAtBottom = useRef<boolean>(true);
+  const lastViewed = useRef<number | null>(null);
   const setActivePath = useConversation((s) => s.setActivePath);
   const [visibleIds, setVisibleIds] = useState<number[]>([]);
   const [renderCount, setRenderCount] = useState(0);
@@ -168,7 +178,30 @@ const MessageView = forwardRef<MessageViewHandle, Props>(function MessageView(
       }
       requestAnimationFrame(() => {
         const el = document.getElementById(`msg-${id}`);
-        el?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        const scroll = scrollRef.current;
+        if (!el || !scroll) return;
+        const rect = el.getBoundingClientRect();
+        const scrollTop = scroll.getBoundingClientRect().top;
+        const relTop = rect.top - scrollTop; // 目标相对滚动容器顶部的偏移
+        const relBottom = relTop + rect.height;
+        // 视口高度扣除输入卡片遮挡，定位到其上方
+        const viewH = scroll.clientHeight - INPUT_OVERLAY;
+        const mid = viewH / 2;
+
+        let block: ScrollLogicalPosition;
+        if (relTop >= 0 && relBottom <= viewH) {
+          // 目标已在有效视口内（当前可见）→ 定位到离窗口中心更远的边缘
+          const topDist = Math.abs(relTop - mid);
+          const bottomDist = Math.abs(relBottom - mid);
+          block = bottomDist > topDist ? 'end' : 'start';
+        } else if (relTop + rect.height / 2 < mid) {
+          // 目标在当前位置上方 → 上边缘对齐视口最上方
+          block = 'start';
+        } else {
+          // 目标在当前位置下方 → 下边缘对齐视口最下方（避开输入框）
+          block = 'end';
+        }
+        el.scrollIntoView({ behavior: 'smooth', block });
       });
     },
     scrollToBottom() {
@@ -192,23 +225,24 @@ const MessageView = forwardRef<MessageViewHandle, Props>(function MessageView(
   // 以 sessionId 变化为触发（而非消息数量），避免切换数量相同的会话时不滚。
   const prevSessionId = useRef<string | null>(null);
   const pendingBottom = useRef(false);
-  useEffect(() => {
+  // useLayoutEffect：会话切换时直接定位到底部（不先显示顶部），且不保留旧会话位置
+  useLayoutEffect(() => {
     if (sessionId !== prevSessionId.current) {
       prevSessionId.current = sessionId;
       pendingBottom.current = true;
-      // 先回顶，避免残留上一会话的滚动位置
       const el = scrollRef.current;
-      if (el) el.scrollTop = 0;
+      if (el) el.scrollTop = el.scrollHeight;
     }
   }, [sessionId]);
 
   useEffect(() => {
-    if (pendingBottom.current && renderCount >= pathMessages.length) {
-      pendingBottom.current = false;
+    // 分批渲染期间持续跟随底部，渲染完成后清标记
+    if (pendingBottom.current && pathMessages.length > 0) {
       const el = scrollRef.current;
-      if (el) {
-        el.scrollTop = el.scrollHeight;
-        reportAtBottom(el);
+      if (el) el.scrollTop = el.scrollHeight;
+      if (renderCount >= pathMessages.length) {
+        pendingBottom.current = false;
+        if (el) reportAtBottom(el);
       }
     }
   }, [renderCount, pathMessages.length, reportAtBottom]);
@@ -236,6 +270,32 @@ const MessageView = forwardRef<MessageViewHandle, Props>(function MessageView(
     }
   }, [onVisibleChange]);
 
+  // 计算当前查看的消息：被滚动区中心线穿过的消息；
+  // 若中心线恰好落在两条消息交界（未穿过任何），fallback 到下方最近的那条
+  const computeViewed = useCallback(() => {
+    const el = scrollRef.current;
+    if (!el) return;
+    const rect = el.getBoundingClientRect();
+    const centerY = rect.top + (el.clientHeight - INPUT_OVERLAY) / 2;
+    let found: number | null = null;
+    let fallback: number | null = null;
+    el.querySelectorAll<HTMLElement>('.msg-row').forEach((row) => {
+      const id = Number(row.id.replace('msg-', ''));
+      if (!Number.isFinite(id)) return;
+      const r = row.getBoundingClientRect();
+      if (r.top <= centerY && r.bottom >= centerY) {
+        found = id;
+      } else if (r.top > centerY && fallback === null) {
+        fallback = id;
+      }
+    });
+    const viewed = found ?? fallback;
+    if (viewed !== lastViewed.current) {
+      lastViewed.current = viewed;
+      onViewedChange?.(viewed);
+    }
+  }, [onViewedChange]);
+
   const onScroll = useCallback(() => {
     if (rafRef.current) return;
     rafRef.current = requestAnimationFrame(() => {
@@ -249,13 +309,15 @@ const MessageView = forwardRef<MessageViewHandle, Props>(function MessageView(
         reportAtBottom(el);
       }
       computeVisible();
+      computeViewed();
     });
-  }, [computeVisible, pathMessages.length, reportAtBottom]);
+  }, [computeVisible, computeViewed, pathMessages.length, reportAtBottom]);
 
   // 初次加载 & 路径变化后计算一次
   useEffect(() => {
     computeVisible();
-  }, [pathMessages, computeVisible]);
+    computeViewed();
+  }, [pathMessages, computeVisible, computeViewed]);
 
   // 上报给父级（供 FloatingDots）
   useEffect(() => {

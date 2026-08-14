@@ -26,16 +26,20 @@ export default function ChatPage() {
   const [leftOpen, setLeftOpen] = useState(true); // 默认展开会话列表
   const [rightOpen, setRightOpen] = useState(false);
   const [visibleIds, setVisibleIds] = useState<number[]>([]);
+  const [viewedId, setViewedId] = useState<number | null>(null);
   const listRef = useRef<MessageViewHandle>(null);
   const reqSeq = useRef(0); // 竞态保护：只接受最后一次请求的结果
 
   const conv = useConversation();
 
   // 加载全部会话
-  useEffect(() => {
+  const loadSessions = () => {
     fetchAllSessions({ count: 100 })
       .then((d) => setSessions(d))
       .catch((e) => console.error('加载会话失败', e));
+  };
+  useEffect(() => {
+    loadSessions();
   }, [token]);
 
   // 打开会话：优先命中缓存，否则拉取全部消息并解析
@@ -121,6 +125,7 @@ export default function ChatPage() {
           sessions={sessions}
           currentId={conv.sessionId}
           onOpen={openSession}
+          onSessionsChange={loadSessions}
         />
       </div>
 
@@ -156,6 +161,7 @@ export default function ChatPage() {
             error={conv.error}
             onOpenBranch={() => setRightOpen(true)}
             onVisibleChange={setVisibleIds}
+            onViewedChange={setViewedId}
           />
         )}
 
@@ -163,7 +169,9 @@ export default function ChatPage() {
           <>
             <FloatingDots
               messages={conv.messages}
+              activePath={conv.activePath}
               visibleIds={visibleIds}
+              currentViewedId={viewedId}
               currentMessageId={conv.currentMessageId}
               onJump={(id) => listRef.current?.scrollToMessage(id)}
             />

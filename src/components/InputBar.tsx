@@ -1,6 +1,6 @@
 // 底部输入栏：发送消息（SSE 流式），完成后刷新整棵树
 
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { sendCompletion, fetchHistory, normalizeMessage } from '../core/api/client';
 import { useConversation } from '../core/store';
 import { buildIndex, activePathOf } from '../core/api/tree';
@@ -14,6 +14,20 @@ export default function InputBar({ sessionId }: Props) {
   const [text, setText] = useState('');
   const [sending, setSending] = useState(false);
   const [streaming, setStreaming] = useState('');
+  const taRef = useRef<HTMLTextAreaElement>(null);
+
+  // 随内容自动增高，达到 max-height 后内部滚动
+  const autoResize = () => {
+    const ta = taRef.current;
+    if (!ta) return;
+    const MAX_H = 128; // 与 textarea max-height 一致（外层 wrapper 的顶部内衬不计入）
+    ta.style.height = 'auto';
+    ta.style.height = Math.min(ta.scrollHeight, MAX_H) + 'px';
+    ta.style.overflowY = ta.scrollHeight > MAX_H ? 'auto' : 'hidden';
+  };
+  useEffect(() => {
+    autoResize();
+  }, []);
 
   // 当前活跃路径最后一条消息作为父节点（在其下新建分支）
   const parentMessageId = conv.activePath.length
@@ -64,18 +78,18 @@ export default function InputBar({ sessionId }: Props) {
     <div className="input-bar">
       {streaming && <div className="stream-preview">{streaming}</div>}
       <div className="input-card">
-        <textarea
-          value={text}
-          onChange={(e) => setText(e.target.value)}
-          placeholder="发消息…"
-          rows={1}
-          onKeyDown={(e) => {
-            if (e.key === 'Enter' && !e.shiftKey) {
-              e.preventDefault();
-              send();
-            }
-          }}
-        />
+        <div className="input-textarea">
+          <textarea
+            ref={taRef}
+            value={text}
+            onChange={(e) => {
+              setText(e.target.value);
+              autoResize();
+            }}
+            placeholder="发消息…"
+            rows={1}
+          />
+        </div>
         <div className="input-card-footer">
           <button className="send-btn" onClick={send} disabled={!text.trim() || sending}>
             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">

@@ -139,10 +139,14 @@ textarea { font: inherit; resize: none; }
   gap: 8px;
   padding: 0 10px;
   background: var(--bg);
+  position: relative;
   z-index: 20;
 }
 .topbar-title {
-  flex: 1;
+  position: absolute;
+  left: 50%;
+  transform: translateX(-50%);
+  max-width: calc(100% - 150px);
   text-align: center;
   font-weight: 600;
   font-size: 16px;
@@ -150,8 +154,9 @@ textarea { font: inherit; resize: none; }
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  pointer-events: none;
 }
-.topbar-actions { display: flex; gap: 4px; }
+.topbar-actions { display: flex; gap: 4px; margin-left: auto; }
 .icon-btn {
   width: 36px;
   height: 36px;
@@ -229,7 +234,7 @@ textarea { font: inherit; resize: none; }
   color: var(--text-faint);
 }
 .conv-item {
-  padding: 10px 12px;
+  padding: 6px 12px;
   border-radius: 10px;
   cursor: pointer;
 }
@@ -244,12 +249,13 @@ textarea { font: inherit; resize: none; }
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  line-height: 1.3;
 }
 .conv-item-meta {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  margin-top: 4px;
+  margin-top: 2px;
   font-size: 12px;
   color: var(--text-faint);
 }
@@ -266,6 +272,38 @@ textarea { font: inherit; resize: none; }
 }
 .fork-btn:hover { background: var(--bg-hover); color: var(--text); }
 .fork-btn:disabled { opacity: 0.5; }
+
+/* ── 会话右键菜单 ── */
+.conv-context-menu {
+  position: fixed;
+  z-index: 100;
+  background: var(--bg-elev);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 6px;
+  min-width: 160px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.3);
+}
+.conv-menu-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 10px 12px;
+  border-radius: 8px;
+  font-size: 14px;
+  color: var(--text);
+  text-align: left;
+  cursor: pointer;
+}
+.conv-menu-item:hover { background: var(--bg-hover); }
+.conv-menu-item:disabled { opacity: 0.5; cursor: default; }
+.conv-menu-item-danger { color: var(--danger); }
+.conv-menu-divider {
+  height: 1px;
+  background: var(--border);
+  margin: 4px 0;
+}
 .conv-empty {
   padding: 32px 0;
   text-align: center;
@@ -398,6 +436,7 @@ textarea { font: inherit; resize: none; }
   flex: 1;
   overflow-y: auto;
   padding: 16px 24px 104px;
+  scroll-padding-bottom: 104px;
   display: flex;
   flex-direction: column;
   gap: 24px;
@@ -450,22 +489,25 @@ textarea { font: inherit; resize: none; }
   display: flex;
   align-items: center;
   gap: 6px;
-  margin-top: 2px;
+  margin: 0px 0 16px;
   color: var(--text-faint);
 }
 .msg-row.user + .branch-switcher { justify-content: flex-end; }
 .switcher-btn {
-  width: 28px;
-  height: 28px;
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  color: var(--text-dim);
-  border-radius: 6px;
+  padding: 0px 2px;
+  color: var(--text-faint);
+  border-radius: 4px;
 }
 .switcher-btn:hover:not(:disabled) { color: var(--text); }
 .switcher-btn:disabled { opacity: 0.35; cursor: default; }
-.switcher-label { font-size: 12px; text-align: center; }
+.switcher-label {
+  font-size: 12px;
+  text-align: center;
+  letter-spacing: 0.06em;
+}
 
 /* ── Markdown 渲染 ── */
 .markdown { font-size: 15px; line-height: 1.6; word-break: break-word; }
@@ -524,16 +566,36 @@ textarea { font: inherit; resize: none; }
 .msg-thinking {
   max-width: 82%;
   margin-bottom: 6px;
-  font-size: 13px;
-  color: var(--text-faint);
-  border-left: 3px solid var(--border-strong);
-  padding-left: 12px;
+  color: var(--text-dim);
+}
+.msg-thinking summary {
+  list-style: none;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 15px;
+  color: var(--text-dim);
+}
+.msg-thinking summary::-webkit-details-marker { display: none; }
+.msg-thinking summary .think-arrow {
+  flex: 0 0 auto;
+  width: 1em;
+  height: 1em;
+  vertical-align: middle;
+  stroke-width: 2px;
+  transition: transform 0.2s ease;
+}
+.msg-thinking[open] summary .think-arrow {
+  transform: rotate(90deg);
 }
 .thinking-body {
   margin-top: 6px;
+  padding-left: 12px;
+  border-left: 1.5px solid var(--border-strong);
   color: var(--text-dim);
   overflow-wrap: anywhere;
-  font-size: 13px;
+  font-size: 15px;
 }
 
 /* ── 悬浮原点（右缘） ── */
@@ -629,17 +691,22 @@ textarea { font: inherit; resize: none; }
   box-shadow: var(--input-shadow);
   overflow: hidden;
 }
+.input-textarea {
+  padding-top: 12px;
+}
 .input-card textarea {
-  flex: 1;
   background: none;
   border: none;
   outline: none;
   color: var(--input-text);
   font-size: 15px;
   line-height: 1.4;
-  padding: 10px 14px 2px;
+  padding: 0 14px 2px;
   resize: none;
-  overflow-y: auto;
+  overflow-y: hidden;
+  height: auto;
+  min-height: 22px;
+  max-height: 128px;
 }
 .input-card textarea::placeholder { color: var(--input-ph); }
 .input-card-footer {
