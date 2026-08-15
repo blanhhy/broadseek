@@ -74,6 +74,12 @@
 
 * { box-sizing: border-box; }
 
+/* 默认禁止选中文本：界面 UI 文本（顶栏/侧栏/按钮/标签等）长按不应出现选择；
+   对话消息内容（含思考内容）单独恢复可选，见 .msg-content / .thinking-body */
+* { user-select: none; -webkit-user-select: none; }
+.msg-content,
+.thinking-body { user-select: text; -webkit-user-select: text; }
+
 /* 禁用 Android WebView 触屏选中时的蓝色方块高亮（点击/长按/按住均有） */
 * { -webkit-tap-highlight-color: transparent; }
 *:focus { outline: none; }
@@ -692,7 +698,8 @@ textarea { font: inherit; resize: none; }
 .markdown hr { border: none; border-top: 1px solid var(--border); margin: 0.8em 0; }
 
 .msg-thinking {
-  max-width: 82%;
+  width: 100%;
+  max-width: 100%;
   margin-bottom: 6px;
   color: var(--text-dim);
 }
