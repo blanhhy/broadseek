@@ -132,6 +132,26 @@ export default function ConversationList({ sessions, currentId, onOpen, onSessio
     return [...map.entries()];
   }, [filtered]);
 
+  // 分组标题羽化检测：官方语义是「卡片上边界越过/接触标题下边界」才显示下边缘羽化，
+  // 而不是「标题到达容器顶部」。首个标题初始即钉在顶部，但下方卡片仍有空隙（列表项间间距），
+  // 此时不显示羽化；上滑到卡片接触标题下边缘才显现。
+  useEffect(() => {
+    const sc = scrollRef.current;
+    if (!sc) return;
+    const update = () => {
+      for (const label of sc.querySelectorAll<HTMLElement>('.conv-group-label')) {
+        const next = label.nextElementSibling;
+        if (!next) continue; // 空分组无卡片，不显示羽化
+        const labelBottom = label.getBoundingClientRect().bottom;
+        const nextTop = next.getBoundingClientRect().top;
+        label.classList.toggle('pinned', nextTop <= labelBottom + 0.5);
+      }
+    };
+    update();
+    sc.addEventListener('scroll', update, { passive: true });
+    return () => sc.removeEventListener('scroll', update);
+  }, [grouped]);
+
   const handleFork = async (s: ChatSession) => {
     if (!s.current_message_id) {
       showToast('复制失败');

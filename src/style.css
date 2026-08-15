@@ -289,14 +289,15 @@ textarea { font: inherit; resize: none; }
   position: sticky;
   top: 0;
   z-index: 3;
-  padding: 12px 12px 6px;
+  padding: 3px 12px;
   font-size: 12px;
   color: var(--text-faint);
   /* 钉住时遮挡下方滚过的会话项 */
   background: var(--bg-elev);
 }
-/* 钉住标题下边缘羽化：减少与下方会话项衔接的突兀感 */
-.conv-group-label::after {
+/* 钉住标题下边缘羽化：仅在 sticky 真正钉住时显示（.pinned 由滚动监听添加），
+   未钉住时不显示，避免遮挡正常流中的下方卡片 */
+.conv-group-label.pinned::after {
   content: '';
   position: absolute;
   left: 0;
@@ -310,6 +311,9 @@ textarea { font: inherit; resize: none; }
   padding: 6px 12px;
   border-radius: 10px;
   cursor: pointer;
+  /* 列表项间微小空隙：分组标题下边缘与首个卡片留出距离，
+     使羽化只在卡片上滑接触标题下边界时才显现（官方行为） */
+  margin-top: 2px;
 }
 .conv-item:hover { background: var(--bg-hover); }
 .conv-item.active {
@@ -342,8 +346,7 @@ textarea { font: inherit; resize: none; }
   display: flex;
   align-items: center;
   justify-content: space-between;
-  margin-top: 2px;
-  font-size: 12px;
+  font-size: 11px;
   color: var(--text-faint);
 }
 .conv-item.active .conv-item-title,
@@ -792,7 +795,8 @@ textarea { font: inherit; resize: none; }
   background: inherit;
   pointer-events: none;
 }
-/* 钉住标题下边缘羽化：背景色渐变到透明，减少与下方内容衔接的突兀感 */
+/* 钉住标题下边缘羽化：标题与 thinking body 一体（无独立背景卡片），
+   羽化叠加在 body 上是自然过渡，始终显示 */
 .msg-thinking summary::after {
   content: '';
   position: absolute;
