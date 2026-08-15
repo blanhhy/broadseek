@@ -293,7 +293,7 @@ export default function InputBar({ sessionId }: Props) {
             </button>
           </div>
         )}
-        <div className="input-textarea">
+        <div className="input-textarea-container">
           <textarea
             ref={taRef}
             value={text}

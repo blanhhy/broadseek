@@ -7,22 +7,22 @@
   --text: #191919;
   --text-dim: #74747e;
   --text-faint: #8e9094;
+  --text-hint: #b9babb;
   --border: #e6e6ea;
   --border-strong: #d6d6dc;
   --accent: #426efe;
-  --accent-text: #3050c8;
-  --accent-bg: rgba(66, 110, 254, 0.10);
+  --accent-text: #426efe;
+  --accent-bg: #edf3fe;
   --user-bubble: #edf3fe;
   --ai-bubble: #ffffff;
   --danger: #e5484d;
   --code-bg: #f2f2f4;
   /* 输入框 / 回到底部按钮：浅色模式用白底 + 浅灰描边 */
   --input-bg: #ffffff;
-  --input-border: #e6e6ea;
-  --input-text: #191919;
-  --input-ph: #9a9aa3;
+  --input-border: #f0f0f0;
   --input-bg-hover: #ececef;
-  --input-shadow: 0 2px 10px rgba(0, 0, 0, 0.12);
+  --input-shadow1: 0 -0.8px 0 0 #f0f0f0;
+  --input-shadow2: 0 4px 12px 2px rgba(0, 0, 0, 0.08);
   --dot-bg: #c4c4cc;
   /* Toast：背景与界面背景相反（浅色界面用深色，深色界面用浅色） */
   --toast-bg: #2a2a30;
@@ -41,28 +41,28 @@
 @media (prefers-color-scheme: dark) {
   :root {
     --bg: #0f0f0f;
-    --bg-elev: #16161c;
-    --bg-elev2: #1d1d24;
+    --bg-elev: #0f0f0f;
+    --bg-elev2: none;
     --bg-hover: rgba(255, 255, 255, 0.05);
     --text: #f8f8f8;
     --text-dim: #90909c;
     --text-faint: #5c5c66;
+    --text-hint: #7d7f85;
     --border: #27272f;
     --border-strong: #34343e;
-    --accent: #426efe;
-    --accent-text: #aab8ff;
-    --accent-bg: rgba(66, 110, 254, 0.12);
+    --accent: #507bf2;
+    --accent-text: #6799fe;
+    --accent-bg: #283142;
     --user-bubble: #333333;
     --ai-bubble: #1b1b22;
     --danger: #ff5c5c;
     --code-bg: #1f2028;
     /* 输入框 / 回到底部按钮：深色模式用深灰背景 + 浅灰描边 */
-    --input-bg: #1d1d24;
-    --input-border: #34343e;
-    --input-text: #f8f8f8;
-    --input-ph: #90909c;
+    --input-bg: #242424;
+    --input-border: #333333;
     --input-bg-hover: #2a2a33;
-    --input-shadow: none;
+    --input-shadow1: none;
+    --input-shadow2: none;
     --dot-bg: #90909c;
     /* Toast：背景与界面背景相反（深色界面用浅色，浅色界面用深色） */
     --toast-bg: #ececef;
@@ -258,7 +258,7 @@ textarea { font: inherit; resize: none; }
   color: var(--text);
   font-size: 14px;
 }
-.drawer-search input::placeholder { color: var(--text-faint); }
+.drawer-search input::placeholder { color: var(--text-hint); }
 
 /* ── 会话列表（左） ── */
 .conv-list { display: flex; flex-direction: column; height: 100%; }
@@ -606,7 +606,7 @@ textarea { font: inherit; resize: none; }
   /* 正向布局 + 自底向上渲染（渲染列表取尾部消息，先呈现最新内容）。
      打开长会话时 scrollTop 恒等于 scrollHeight（最新消息在底部），
      分批补充更早消息时在顶部扩展、底部位置不动，不会出现"消息从顶飞过" */
-  padding: 16px 24px 133px;
+  padding: 16px 16px 133px;
   scroll-padding-bottom: 133px;
   display: flex;
   flex-direction: column;
@@ -630,7 +630,10 @@ textarea { font: inherit; resize: none; }
 
 .msg-row { display: flex; flex-direction: column; }
 .msg-row.user { align-items: flex-end; }
-.msg-row.ai { align-items: flex-start; }
+.msg-row.ai {
+  padding: 0 6px;
+  align-items: flex-start;
+}
 
 .msg-bubble {
   max-width: 82%;
@@ -638,13 +641,13 @@ textarea { font: inherit; resize: none; }
   border-radius: 16px;
   font-size: 15px;
   line-height: 1.6;
+  white-space: pre-wrap;
   overflow-wrap: anywhere;
 }
 .msg-row.user .msg-bubble {
   background: var(--user-bubble);
   color: var(--text);
   border-bottom-right-radius: 6px;
-  white-space: pre-wrap;
 }
 .msg-row.ai .msg-bubble {
   background: transparent;
@@ -714,7 +717,7 @@ textarea { font: inherit; resize: none; }
 .markdown { font-size: 15px; line-height: 1.6; word-break: break-word; }
 .markdown > *:first-child { margin-top: 0; }
 .markdown > *:last-child { margin-bottom: 0; }
-.markdown p { margin: 0.5em 0; }
+.markdown p { margin: 0; }
 .markdown h1, .markdown h2, .markdown h3, .markdown h4 {
   margin: 0.8em 0 0.4em;
   line-height: 1.3;
@@ -724,7 +727,7 @@ textarea { font: inherit; resize: none; }
 .markdown h2 { font-size: 1.25em; }
 .markdown h3 { font-size: 1.1em; }
 .markdown h4 { font-size: 1.02em; }
-.markdown ul, .markdown ol { margin: 0.5em 0; padding-left: 1.4em; }
+.markdown ul, .markdown ol { margin: 0; padding-left: 1.4em; }
 .markdown li { margin: 0.2em 0; }
 .markdown a { color: var(--accent-text); text-decoration: underline; }
 .markdown blockquote {
@@ -785,18 +788,6 @@ textarea { font: inherit; resize: none; }
   z-index: 2;
   background: var(--bg);
 }
-/* sticky 标题向上延伸背景，覆盖滚动容器顶部的 padding 区域以及上移的 16px，
-   避免上一段内容从标题上方漏出 */
-.msg-thinking summary::before {
-  content: '';
-  position: absolute;
-  left: 0;
-  right: 0;
-  bottom: 100%;
-  height: 32px;
-  background: inherit;
-  pointer-events: none;
-}
 /* 钉住标题下边缘羽化：标题与 thinking body 一体（无独立背景卡片），
    羽化叠加在 body 上是自然过渡，始终显示 */
 .msg-thinking summary::after {
@@ -822,13 +813,16 @@ textarea { font: inherit; resize: none; }
   transform: rotate(90deg);
 }
 .thinking-body {
-  margin-top: 6px;
-  padding-left: 12px;
-  border-left: 1.5px solid var(--border-strong);
+  margin: 6px 6px 16px;
+  padding: 0 0 0 16px;
+  border-left: 1.5px solid var(--border);
   color: var(--text-dim);
+  white-space: pre-wrap;
   overflow-wrap: anywhere;
-  font-size: 15px;
+  font-size: 14px;
 }
+/* 思考内容里的 markdown 覆盖 .markdown 默认字号（15px），继承 thinking-body 的字号 */
+.thinking-body .markdown { font-size: inherit; }
 
 /* ── 悬浮原点（右缘） ── */
 .floating-dots {
@@ -882,7 +876,8 @@ textarea { font: inherit; resize: none; }
   left: 0;
   right: 0;
   bottom: 0;
-  padding: 10px 14px 16px;
+  margin: 0 12px;
+  padding-bottom: 8px;
   background: transparent;
   z-index: 12;
 }
@@ -925,37 +920,27 @@ textarea { font: inherit; resize: none; }
   position: relative;
   z-index: 1;
 }
-.stream-preview {
-  margin-bottom: 8px;
-  padding: 8px 12px;
-  border-radius: 10px;
-  background: var(--bg-elev2);
-  font-size: 14px;
-  color: var(--text-dim);
-  white-space: pre-wrap;
-  max-height: 120px;
-  overflow-y: auto;
-}
 /* 2 行高的圆角卡片：第一行可输入，第二行末放发送按钮 */
 .input-card {
   display: flex;
   flex-direction: column;
-  margin: 0 6px;
   background: var(--input-bg);
-  border: 1px solid var(--input-border);
-  border-radius: 16px;
-  box-shadow: var(--input-shadow);
+/*   box-shadow: 
+    var(--input-shadow2),
+    var(--input-shadow1); */
+  border: 1.6px solid var(--input-border);
+  border-radius: 24px;
   overflow: hidden;
 }
-.input-textarea {
-  padding-top: 12px;
+.input-textarea-container {
+  padding-top: 16px;
 }
 .input-card textarea {
   background: none;
   border: none;
   outline: none;
   width: 100%; /* 撑满容器：默认按 cols 宽度显示，文本只能占一半 */
-  color: var(--input-text);
+  color: var(--text);
   font-size: 15px;
   line-height: 1.4;
   padding: 0 14px 2px;
@@ -965,7 +950,7 @@ textarea { font: inherit; resize: none; }
   min-height: 22px;
   max-height: 128px;
 }
-.input-card textarea::placeholder { color: var(--input-ph); }
+.input-card textarea::placeholder { color: var(--text-hint); }
 .input-card-footer {
   display: flex;
   justify-content: flex-end;
@@ -990,17 +975,17 @@ textarea { font: inherit; resize: none; }
 .msg-wrap .scroll-bottom-btn {
   position: absolute;
   right: 24px;
-  bottom: 112px;
+  bottom: 106px;
   width: 30px;
   height: 30px;
   border-radius: 50%;
   background: var(--input-bg);
-  border: 1px solid var(--input-border);
+  border: 1.6px solid var(--input-border);
   color: var(--input-text);
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  box-shadow: var(--input-shadow);
+  box-shadow: var(--input-shadow2);
   z-index: 16;
 }
 .msg-wrap .scroll-bottom-btn:hover,
