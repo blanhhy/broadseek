@@ -48,6 +48,20 @@ export default function ChatPage() {
     setRightOpen((v) => !v);
   };
 
+  // 抽屉状态（open class）由 React 提交后，延迟到吸附动画结束（0.28s）再清理 --drawer-x：
+  // 此刻 var 值（目标位置）与 class fallback（open→0 / 关闭→±100%）完全相等，
+  // 直接 removeProperty 不会产生任何视觉跳变，也绝不打断过渡动画。
+  useEffect(() => {
+    const t = window.setTimeout(() => {
+      for (const el of document.querySelectorAll<HTMLElement>('.drawer-left, .drawer-right')) {
+        if (el.style.getPropertyValue('--drawer-x')) {
+          el.style.removeProperty('--drawer-x');
+        }
+      }
+    }, 320);
+    return () => window.clearTimeout(t);
+  }, [leftOpen, rightOpen]);
+
   // 抽屉滑动手势（移动端，拖拽跟随 + 松手按进度阈值吸附）：
   //  - 两栏都关闭：左边缘右滑 → 拖出左栏；右边缘左滑 → 拖出右栏
   //  - 左栏打开：左栏内右滑 → 拖出关闭（松手过半才关）
@@ -58,21 +72,19 @@ export default function ChatPage() {
     const EDGE = 24; // 边缘识别宽度 px
     const DEAD = 6; // 横向死区 px（避免纵向滚动时的抖动位移）
     const THRESH = 0.5; // 松手进度阈值：过半则吸附到另一侧
-    const SETTLE_MS = 320; // 松手吸附动画结束后清理 --drawer-x（大于 class 0.28s 过渡）
     let drawer: 'left' | 'right' | null = null;
     let startX = 0;
     let startY = 0;
     let width = 336;
     let fromOpen = false; // 拖拽是否从「打开」状态开始
     let v = 0;
-    let settleTimer: number | null = null;
+    let suppressClick = false; // 拖拽手势结束后抑制 click 穿透（防止误触抽屉内元素）
 
     const leftEl = () => document.querySelector<HTMLElement>('.drawer-left');
     const rightEl = () => document.querySelector<HTMLElement>('.drawer-right');
 
     // 清理拖拽变量，交还 CSS class 控制 transform（--drawer-x 缺省 = class 默认位置）
     const clearDrag = (el: HTMLElement | null) => {
-      if (settleTimer) { window.clearTimeout(settleTimer); settleTimer = null; }
       if (el) {
         el.style.transition = '';
         el.style.removeProperty('--drawer-x');
@@ -80,7 +92,6 @@ export default function ChatPage() {
     };
 
     const onStart = (e: TouchEvent) => {
-      if (settleTimer) { window.clearTimeout(settleTimer); settleTimer = null; }
       const t = e.touches[0];
       const x = t.clientX;
       const W = window.innerWidth;
@@ -121,11 +132,26 @@ export default function ChatPage() {
       }
     };
     const startV0 = () => (fromOpen ? 0 : (drawer === 'left' ? -width : width));
-    const onEnd = () => {
+    const onEnd = (e: TouchEvent) => {
       if (!drawer) return;
       const isLeft = drawer === 'left';
       const el = isLeft ? leftEl() : rightEl();
       if (el) {
+        // 用 touchend 实际坐标校正最终位移：
+        // 触摸采样稀疏时，最后一个 touchmove 可能滞后于手指位置，导致 v 误判（松手回弹）。
+        const ct = e.changedTouches && e.changedTouches[0];
+        if (ct) {
+          const dx = ct.clientX - startX;
+          const dy = ct.clientY - startY;
+          if (Math.abs(dx) > DEAD && Math.abs(dx) > Math.abs(dy)) {
+            const moving = isLeft ? (fromOpen ? dx < 0 : dx > 0) : (fromOpen ? dx > 0 : dx < 0);
+            if (moving) {
+              v = isLeft
+                ? Math.min(0, Math.max(-width, startV0() + dx))
+                : Math.max(0, Math.min(width, startV0() + dx));
+            }
+          }
+        }
         if (Math.abs(v - startV0()) < 1) {
           // 无实际拖拽（点击/死区内滑动）：直接清变量，交还 class 控制
           clearDrag(el);
@@ -139,16 +165,18 @@ export default function ChatPage() {
             setRightOpen(targetOpen);
             if (targetOpen) setLeftOpen(false);
           }
-          // 保持 --drawer-x 为目标值，让 class 的 0.28s 过渡从当前位置吸附过去；
-          // 动画结束后定时清理变量（不依赖 transitionend，避免残留覆盖 class transform）
+          // 抑制手势结束后浏览器派发的 click 穿透：
+          // touchend 后浏览器会补发 click，若拖拽未超过阈值回弹打开，该 click 会命中抽屉内元素
+          // （左栏会话项/右栏分支项）触发 openSession/跳转，造成「闪回完全关闭」的假象。
+          suppressClick = true;
+          window.setTimeout(() => { suppressClick = false; }, 350);
+          // 吸附动画：先恢复 class 的 0.28s 过渡，下一帧（transition 已生效）再写入目标值。
+          // 若同一帧内「恢复过渡 + 改 transform」，部分 WebView 会认为变化发生在过渡生效前，
+          // 直接跳变到最终位置（无过渡动画），表现为「松手瞬间立即完全关闭」。
           el.style.transition = '';
-          el.style.setProperty('--drawer-x', `${targetV}px`);
-          if (settleTimer) window.clearTimeout(settleTimer);
-          settleTimer = window.setTimeout(() => {
-            settleTimer = null;
-            el.style.transition = '';
-            el.style.removeProperty('--drawer-x');
-          }, SETTLE_MS);
+          requestAnimationFrame(() => {
+            el.style.setProperty('--drawer-x', `${targetV}px`);
+          });
         }
       }
       drawer = null;
@@ -164,12 +192,20 @@ export default function ChatPage() {
     document.addEventListener('touchmove', onMove, { passive: false });
     document.addEventListener('touchend', onEnd, { passive: true });
     document.addEventListener('touchcancel', onCancel, { passive: true });
+    // 捕获阶段拦截手势拖拽结束后补发的 click（穿透抑制）
+    const onClickCapture = (e: MouseEvent) => {
+      if (suppressClick) {
+        e.preventDefault();
+        e.stopPropagation();
+      }
+    };
+    document.addEventListener('click', onClickCapture, true);
     return () => {
-      if (settleTimer) window.clearTimeout(settleTimer);
       document.removeEventListener('touchstart', onStart);
       document.removeEventListener('touchmove', onMove);
       document.removeEventListener('touchend', onEnd);
       document.removeEventListener('touchcancel', onCancel);
+      document.removeEventListener('click', onClickCapture, true);
     };
   }, []);
 
@@ -316,10 +352,11 @@ export default function ChatPage() {
         />
       </div>
 
-      {/* 遮罩 */}
-      {(leftOpen || rightOpen) && (
-        <div className="scrim" onClick={() => { setLeftOpen(false); setRightOpen(false); }} />
-      )}
+      {/* 遮罩：始终挂载，用 opacity 过渡淡入淡出（避免关闭瞬间遮罩突然消失造成视觉闪动） */}
+      <div
+        className={`scrim ${(leftOpen || rightOpen) ? 'visible' : ''}`}
+        onClick={() => { setLeftOpen(false); setRightOpen(false); }}
+      />
 
       {/* 主区 */}
       <main className="chat-main">
