@@ -536,9 +536,20 @@ textarea { font: inherit; resize: none; }
 /* 被编辑的消息气泡浮于蒙版之上（仅气泡，不含下方操作行） */
 .msg-row.editing { position: relative; z-index: 11; }
 
+/* 每个消息一个块（气泡 + 操作栏/切换器）：column-reverse 只反转块间顺序，
+   块内保持"气泡在上、操作栏在下"的原始布局，间距与消息间一致（操作栏负 margin 抵消） */
+.msg-block {
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+}
+
 .msg-scroll {
   flex: 1;
   overflow-y: auto;
+  /* 正向布局 + 自底向上渲染（渲染列表取尾部消息，先呈现最新内容）。
+     打开长会话时 scrollTop 恒等于 scrollHeight（最新消息在底部），
+     分批补充更早消息时在顶部扩展、底部位置不动，不会出现"消息从顶飞过" */
   padding: 16px 24px 133px;
   scroll-padding-bottom: 133px;
   display: flex;

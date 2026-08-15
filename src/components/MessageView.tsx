@@ -1,7 +1,7 @@
 // 主聊天区：按活跃路径顺序展示消息，支持加载/错误态与滚动定位
 // 每个消息若存在同父兄弟（分支），下方显示"X/Y"切换器
 
-import { Fragment, forwardRef, memo, useCallback, useEffect, useImperativeHandle, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { forwardRef, memo, useCallback, useEffect, useImperativeHandle, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import type { NormalizedMessage } from '../core/api/types';
 import { buildIndex, branchSiblings, switchBranchPath, activePathOf } from '../core/api/tree';
@@ -37,6 +37,7 @@ function cancelIdle(id: number) {
 export interface MessageViewHandle {
   scrollToMessage: (id: number) => void;
   scrollToBottom: () => void;
+  scrollToBottomAfterPath: () => void;
 }
 
 interface Props {
@@ -555,6 +556,12 @@ const MessageView = forwardRef<MessageViewHandle, Props>(function MessageView(
       if (!el) return;
       el.scrollTo({ top: el.scrollHeight, behavior: 'smooth' });
     },
+    // 分支路径切换后立即滚到底：置位 pendingBottom，分批渲染补齐期间持续跟随底部
+    scrollToBottomAfterPath() {
+      pendingBottom.current = true;
+      const el = scrollRef.current;
+      if (el) el.scrollTop = el.scrollHeight;
+    },
   }), [pathMessages, renderCount]);
 
   // 判断是否接近底部，供"回到底部"按钮显隐
@@ -607,19 +614,18 @@ const MessageView = forwardRef<MessageViewHandle, Props>(function MessageView(
   }, [pathMessages]);
 
   // 计算当前视口内可见的消息 id，供悬浮原点跟随滚动
+  // 用屏幕坐标判断与滚动容器视口的相交，兼容 column-reverse 布局
   const computeVisible = useCallback(() => {
     const el = scrollRef.current;
     if (!el) return;
-    const top = el.scrollTop;
-    const bottom = top + el.clientHeight;
+    const er = el.getBoundingClientRect();
     const ids: number[] = [];
     el.querySelectorAll<HTMLElement>('.msg-row').forEach((row) => {
       const id = Number(row.id.replace('msg-', ''));
       if (!Number.isFinite(id)) return;
-      const r = row.offsetTop;
-      const h = row.offsetHeight;
+      const r = row.getBoundingClientRect();
       // 与视口相交（含边界）
-      if (r < bottom && r + h > top) ids.push(id);
+      if (r.top < er.bottom && r.bottom > er.top) ids.push(id);
     });
     const key = ids.join(',');
     if (key !== lastReported.current) {
@@ -659,10 +665,10 @@ const MessageView = forwardRef<MessageViewHandle, Props>(function MessageView(
     if (rafRef.current) return;
     rafRef.current = requestAnimationFrame(() => {
       rafRef.current = null;
-      // 滚动接近底部时提前补齐未渲染消息，避免空白
+      // 自底向上渲染：未渲染的更早消息在顶部，滚动接近顶部时提前补齐，避免空白
       const el = scrollRef.current;
       if (el) {
-        if (el.scrollTop + el.clientHeight >= el.scrollHeight - 240) {
+        if (el.scrollTop < 240) {
           setRenderCount((c) => Math.min(c + BATCH, pathMessages.length));
         }
         reportAtBottom(el);
@@ -724,11 +730,15 @@ const MessageView = forwardRef<MessageViewHandle, Props>(function MessageView(
         {!loading && !error && pathMessages.length === 0 && (
           <div className="msg-state empty">这条路径还没有消息，从下方输入开始对话</div>
         )}
-        {pathMessages.slice(0, renderCount).map((m) => {
+        {/* 自底向上渲染：取尾部 renderCount 条（最新消息在 DOM 末尾 = 视觉底部），
+            分批补充更早消息时在顶部扩展、底部位置保持稳定 */}
+        {pathMessages.slice(-renderCount).map((m) => {
           const { siblings, index } = branchSiblings(idx, m.id);
           const isLastAi = lastAi !== null && m.id === lastAi.id;
+          // 用 .msg-block 包住每个消息（气泡+操作栏）：column-reverse 只反转块之间的顺序，
+          // 块内部保持"气泡在上、操作栏在下"的原始布局
           return (
-            <Fragment key={m.id}>
+            <div className="msg-block" key={m.id}>
               <BubbleMemo m={m} />
               {isLastAi ? (
                 <MessageActions
@@ -750,7 +760,7 @@ const MessageView = forwardRef<MessageViewHandle, Props>(function MessageView(
                   />
                 )
               )}
-            </Fragment>
+            </div>
           );
         })}
       </div>

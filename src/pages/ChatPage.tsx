@@ -136,6 +136,7 @@ export default function ChatPage() {
           activePath={conv.activePath}
           currentMessageId={conv.currentMessageId}
           onClose={() => setRightOpen(false)}
+          onJumped={() => listRef.current?.scrollToBottomAfterPath()}
         />
       </div>
 

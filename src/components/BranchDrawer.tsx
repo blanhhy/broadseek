@@ -11,6 +11,7 @@ interface Props {
   activePath: number[];
   currentMessageId: number | null;
   onClose: () => void;
+  onJumped?: () => void; // 切换分支路径成功后回调（供主区滚到底部等）
 }
 
 function fmtTime(ts: number): string {
@@ -144,7 +145,7 @@ function BranchItem({
   );
 }
 
-export default function BranchDrawer({ messages, activePath, onClose }: Props) {
+export default function BranchDrawer({ messages, activePath, onClose, onJumped }: Props) {
   const [keyword, setKeyword] = useState('');
   const setActivePath = useConversation((s) => s.setActivePath);
 
@@ -193,6 +194,7 @@ export default function BranchDrawer({ messages, activePath, onClose }: Props) {
 
   const jumpTo = (path: number[], leafId: number) => {
     setActivePath(path, leafId);
+    onJumped?.();
     // 跳转后把该条目滚动到能露出下方小字(meta)的位置
     const container = scrollRef.current;
     if (container) {

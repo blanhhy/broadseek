@@ -71,10 +71,11 @@ export const useConversation = create<ConversationState>((set) => ({
   loading: false,
   error: null,
   editingMessageId: null,
-  setConversation: (sessionId) => set({ sessionId }),
+  setConversation: (sessionId) => set({ sessionId, editingMessageId: null }),
   setData: (d) => set({ ...d }),
   setActivePath: (activePath, currentMessageId) =>
-    set({ activePath, currentMessageId }),
+    // 切换分支路径后目标路径上未必有被编辑消息，编辑操作随之取消
+    set({ activePath, currentMessageId, editingMessageId: null }),
   setLoading: (loading) => set({ loading }),
   setError: (error) => set({ error }),
   setEditingMessageId: (editingMessageId) => set({ editingMessageId }),
