@@ -1,74 +1,75 @@
-/* DeepSeek 第三客户端 · UI（窄窗口/移动端风格，默认深色） */
-
-/* ── 主题 tokens（默认深色） ── */
+/* ── 主题 tokens（默认浅色） ── */
 :root {
-  --bg: #0f0f0f;
-  --bg-elev: #16161c;
-  --bg-elev2: #1d1d24;
-  --bg-hover: rgba(255, 255, 255, 0.05);
-  --text: #f8f8f8;
-  --text-dim: #90909c;
-  --text-faint: #5c5c66;
-  --border: #27272f;
-  --border-strong: #34343e;
+  --bg: #ffffff;
+  --bg-elev: #ffffff;
+  --bg-elev2: #f5f5f5;
+  --bg-hover: rgba(0, 0, 0, 0.04);
+  --text: #191919;
+  --text-dim: #74747e;
+  --text-faint: #8e9094;
+  --border: #e6e6ea;
+  --border-strong: #d6d6dc;
   --accent: #426efe;
-  --accent-text: #aab8ff;
-  --accent-bg: rgba(66, 110, 254, 0.12);
-  --user-bubble: #333333;
-  --ai-bubble: #1b1b22;
-  --danger: #ff5c5c;
-  --code-bg: #1f2028;
-  /* 输入框 / 回到底部按钮：深色模式用深灰背景 + 浅灰描边 */
-  --input-bg: #1d1d24;
-  --input-border: #34343e;
-  --input-text: #f8f8f8;
-  --input-ph: #90909c;
-  --input-bg-hover: #2a2a33;
-  --input-shadow: none;
-  --dot-bg: #90909c;
-  /* Toast：背景与界面背景相反（深色界面用浅色，浅色界面用深色） */
-  --toast-bg: #ececef;
-  --toast-text: #191919;
+  --accent-text: #3050c8;
+  --accent-bg: rgba(66, 110, 254, 0.10);
+  --user-bubble: #edf3fe;
+  --ai-bubble: #ffffff;
+  --danger: #e5484d;
+  --code-bg: #f2f2f4;
+  /* 输入框 / 回到底部按钮：浅色模式用白底 + 浅灰描边 */
+  --input-bg: #ffffff;
+  --input-border: #e6e6ea;
+  --input-text: #191919;
+  --input-ph: #9a9aa3;
+  --input-bg-hover: #ececef;
+  --input-shadow: 0 2px 10px rgba(0, 0, 0, 0.12);
+  --dot-bg: #c4c4cc;
+  /* Toast：背景与界面背景相反（浅色界面用深色，深色界面用浅色） */
+  --toast-bg: #2a2a30;
+  --toast-text: #f5f5f5;
   /* 编辑模式蒙版：半透明遮住对话区，露出输入框与被编辑气泡 */
-  --edit-mask: rgba(0, 0, 0, 0.55);
+  --edit-mask: rgba(255, 255, 255, 0.6);
   font: 16px/1.55 system-ui, 'Segoe UI', Roboto, -apple-system, sans-serif;
-  color-scheme: dark;
+  color-scheme: light;
   color: var(--text);
   background: var(--bg);
   -webkit-font-smoothing: antialiased;
   text-rendering: optimizeLegibility;
 }
 
-/* 浅色（跟随系统） */
-@media (prefers-color-scheme: light) {
+/* 深色（跟随系统） */
+@media (prefers-color-scheme: dark) {
   :root {
-    --bg: #ffffff;
-    --bg-elev: #ffffff;
-    --bg-elev2: #f5f5f5;
-    --bg-hover: rgba(0, 0, 0, 0.04);
-    --text: #191919;
-    --text-dim: #74747e;
-    --text-faint: #8e9094;
-    --border: #e6e6ea;
-    --border-strong: #d6d6dc;
+    --bg: #0f0f0f;
+    --bg-elev: #16161c;
+    --bg-elev2: #1d1d24;
+    --bg-hover: rgba(255, 255, 255, 0.05);
+    --text: #f8f8f8;
+    --text-dim: #90909c;
+    --text-faint: #5c5c66;
+    --border: #27272f;
+    --border-strong: #34343e;
     --accent: #426efe;
-    --accent-text: #3050c8;
-    --accent-bg: rgba(66, 110, 254, 0.10);
-    --user-bubble: #edf3fe;
-    --ai-bubble: #ffffff;
-    --danger: #e5484d;
-    --code-bg: #f2f2f4;
-    --input-bg: #ffffff;
-    --input-border: #e6e6ea;
-    --input-text: #191919;
-    --input-ph: #9a9aa3;
-    --input-bg-hover: #ececef;
-    --input-shadow: 0 2px 10px rgba(0, 0, 0, 0.12);
-    --dot-bg: #c4c4cc;
-    --toast-bg: #2a2a30;
-    --toast-text: #f5f5f5;
-    --edit-mask: rgba(255, 255, 255, 0.6);
-    color-scheme: light;
+    --accent-text: #aab8ff;
+    --accent-bg: rgba(66, 110, 254, 0.12);
+    --user-bubble: #333333;
+    --ai-bubble: #1b1b22;
+    --danger: #ff5c5c;
+    --code-bg: #1f2028;
+    /* 输入框 / 回到底部按钮：深色模式用深灰背景 + 浅灰描边 */
+    --input-bg: #1d1d24;
+    --input-border: #34343e;
+    --input-text: #f8f8f8;
+    --input-ph: #90909c;
+    --input-bg-hover: #2a2a33;
+    --input-shadow: none;
+    --dot-bg: #90909c;
+    /* Toast：背景与界面背景相反（深色界面用浅色，浅色界面用深色） */
+    --toast-bg: #ececef;
+    --toast-text: #191919;
+    /* 编辑模式蒙版：半透明遮住对话区，露出输入框与被编辑气泡 */
+    --edit-mask: rgba(0, 0, 0, 0.55);
+    color-scheme: dark;
   }
 }
 
@@ -309,11 +310,12 @@ textarea { font: inherit; resize: none; }
 }
 .conv-item {
   padding: 6px 12px;
-  border-radius: 10px;
+  border-radius: 12px;
   cursor: pointer;
   /* 列表项间微小空隙：分组标题下边缘与首个卡片留出距离，
      使羽化只在卡片上滑接触标题下边界时才显现（官方行为） */
   margin-top: 2px;
+  margin-right: 12px;
 }
 .conv-item:hover { background: var(--bg-hover); }
 .conv-item.active {
