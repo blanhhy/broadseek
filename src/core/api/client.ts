@@ -6,6 +6,7 @@ import { makePowHeader } from './pow';
 import type { PowChallenge } from './pow';
 import { DsBridge, type DsSseEvent } from './nativeBridge';
 import type { PluginListenerHandle } from '@capacitor/core';
+import { deleteHistoryCache, getHistoryCache, setHistoryCache } from './historyCache';
 
 // 是否运行在 Capacitor 原生环境（区别于浏览器）
 export function isNativeRuntime(): boolean {
@@ -183,12 +184,95 @@ export async function fetchAllSessions(opts: { count?: number } = {}): Promise<C
   return sessions;
 }
 
-// 读取会话全部消息（一次返回整棵树，无分页）
-export function fetchHistory(sessionId: string) {
-  return request<{ chat_session: ChatSession; chat_messages: ChatMessage[]; cache_valid: boolean }>(
-    '/chat/history_messages',
-    { query: { chat_session_id: sessionId } },
-  );
+// 读取会话全部消息（带本地缓存增量协议）
+//
+// 对齐官方 web 2.3.0（从官方 bundle 逆向）：
+//  - 本地已有缓存时携带 cache_version(=session.version) + cache_reset_at
+//  - 版本命中：服务端返回空 chat_messages（≈400B，cache_valid=true），
+//    直接复用本地缓存，避免全量拉取 3MB + JSON.parse
+//  - 版本过期：服务端返回全量消息，按 message_id 合并（响应优先）后替换缓存
+//  - cache_control 缺省/MERGE → 合并；REPLACE → 直接使用响应
+//  - 空会话(version===0)或会话已删除(biz_code=1) → 清理本地缓存
+export interface HistoryResult {
+  chat_session: ChatSession;
+  chat_messages: ChatMessage[];
+  cache_valid: boolean;
+  fromCache: boolean; // 本次结果是否来自本地缓存命中（未做大响应传输）
+}
+
+/** 按 message_id 去重（保留首次出现；调用方把「响应在前、缓存在后」传入即可让响应优先） */
+function dedupeByMessageId(list: ChatMessage[]): ChatMessage[] {
+  const seen = new Set<number>();
+  const out: ChatMessage[] = [];
+  for (const m of list) {
+    if (seen.has(m.message_id)) continue;
+    seen.add(m.message_id);
+    out.push(m);
+  }
+  return out;
+}
+
+export async function fetchHistory(sessionId: string): Promise<HistoryResult> {
+  const cached = await getHistoryCache(sessionId);
+  const query: Record<string, string | number | undefined> = { chat_session_id: sessionId };
+  // 仅当缓存同时持有 version 与 cacheResetAt 才携带缓存参数（对齐官方）
+  if (cached && cached.version != null && cached.cacheResetAt != null) {
+    query.cache_version = cached.version;
+    query.cache_reset_at = cached.cacheResetAt;
+  }
+
+  let data: {
+    chat_session: ChatSession;
+    chat_messages: ChatMessage[];
+    cache_valid: boolean;
+    cache_control?: string;
+    cache_reset_at?: number;
+  };
+  try {
+    data = await request<
+      typeof data
+    >(
+      '/chat/history_messages',
+      { query },
+    );
+  } catch (e) {
+    // 会话已删除（INVALID_SESSION_ID）：清理本地缓存，避免复活旧数据
+    if (e instanceof ApiError && e.bizCode === 1) void deleteHistoryCache(sessionId);
+    throw e;
+  }
+
+  // 空会话 / 会话不可用：官方直接清缓存
+  if (!data.chat_session || data.chat_session.version === 0) {
+    void deleteHistoryCache(sessionId);
+    return { ...data, fromCache: false };
+  }
+
+  // 合并：REPLACE 直接用响应；否则(MERGE/缺省)响应 + 本地缓存按 message_id 去重（响应优先）
+  const merged =
+    data.cache_control === 'REPLACE'
+      ? data.chat_messages
+      : dedupeByMessageId([...data.chat_messages, ...(cached?.data.chat_messages ?? [])]);
+
+  const shouldCache = (data.cache_control !== 'MERGE' || data.chat_messages.length !== 0) && merged.length !== 0;
+  if (shouldCache) {
+    void setHistoryCache({
+      key: sessionId,
+      version: data.chat_session.version,
+      cacheResetAt:
+        data.cache_control === 'REPLACE'
+          ? data.cache_reset_at!
+          : (cached?.cacheResetAt ?? Math.floor(data.chat_session.updated_at)),
+      data: { chat_session: data.chat_session, chat_messages: merged },
+      timestamp: Date.now(),
+    });
+  }
+
+  return {
+    chat_session: data.chat_session,
+    chat_messages: merged,
+    cache_valid: data.cache_valid,
+    fromCache: data.chat_messages.length === 0 && cached !== null,
+  };
 }
 
 // 删除会话

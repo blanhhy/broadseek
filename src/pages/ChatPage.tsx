@@ -48,6 +48,18 @@ export default function ChatPage() {
     setRightOpen(false);
     conv.setConversation(id);
 
+    // 离开当前会话前，把最新消息树快照写回内存缓存
+    // （流式/编辑/分支切换直接原地改 conv.messages，只有这里能捕获最终态）
+    const prevId = conv.sessionId;
+    if (prevId && prevId !== id && conv.session && conv.messages.length > 0) {
+      sessionCache.set(prevId, {
+        session: conv.session,
+        messages: conv.messages,
+        activePath: conv.activePath,
+        currentMessageId: conv.currentMessageId,
+      });
+    }
+
     // 命中缓存：直接秒开，不再请求
     const cached = sessionCache.get(id);
     if (cached) {

@@ -10,6 +10,7 @@ export interface ChatSession {
   current_message_id: number | null;
   inserted_at: number;
   updated_at: number;
+  version: number; // 会话内容版本号：history_messages 缓存协议(cache_version)的依据
 }
 
 // ── 单条消息（history_messages 返回）──
