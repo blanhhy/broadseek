@@ -4,36 +4,11 @@ import { createPortal } from 'react-dom';
 import { sendCompletion, editMessage, fetchHistory, normalizeMessage, ApiError } from '../core/api/client';
 import { useConversation } from '../core/store';
 import { buildIndex, activePathOf } from '../core/api/tree';
+import { DeltaParser, nextTempId } from '../core/api/delta';
 import type { NormalizedMessage } from '../core/api/types';
-
-// 临时消息 id（负数自减，避免与服务器真实 id 冲突）
-let tempSeq = 0;
-function nextTempId(): number {
-  return --tempSeq;
-}
 
 interface Props {
   sessionId: string;
-}
-
-// 官方 completion SSE 增量解析（操作符格式，p/o 跨事件持久化）
-// 参考 raw-api-reference.md 的 DeltaParser
-class DeltaParser {
-  private op = 'SET';
-  private path = '';
-  parse(event: any): { path: string; op: string; value: any }[] {
-    let op = this.op = event.o ?? this.op;
-    let path = this.path = event.p ?? this.path;
-    if (op !== 'BATCH') return [{ path, op, value: event.v }];
-    const results: { path: string; op: string; value: any }[] = [];
-    for (const item of event.v) {
-      for (const s of this.parse(item)) {
-        s.path = (path ? path + '/' : '') + s.path;
-        results.push(s);
-      }
-    }
-    return results;
-  }
 }
 
 export default function InputBar({ sessionId }: Props) {

@@ -191,14 +191,6 @@ export function fetchHistory(sessionId: string) {
   );
 }
 
-// 切换会话当前消息（分支位置书签）
-export function updateCurrentMessage(sessionId: string, messageId: number) {
-  return request<null>('/chat_session/update_current_message', {
-    method: 'POST',
-    body: { chat_session_id: sessionId, message_id: messageId },
-  });
-}
-
 // 删除会话
 export function deleteSession(sessionId: string) {
   return request<null>('/chat_session/delete', {
@@ -310,6 +302,41 @@ export async function editMessage(
     ...body,
   };
   await streamSse(`${BASE}/chat/edit_message`, headers, fullBody, onEvent, signal);
+}
+
+// 重新生成 AI 回复（SSE 流式）
+// 官方 web 端点 /chat/regenerate：child_message_id 为被重新生成的 AI 消息 id，
+// 服务器在其父提问下创建新的兄弟回复（与 completion 的 parent 语义不同，
+// completion 的 parent 必须是 AI 消息或 null，传 USER 消息会报 invalid message role）。
+// PoW 场景为 completion_like，target_path 沿用 /api/v0/chat/completion。
+export interface RegenerateBody {
+  chat_session_id: string;
+  child_message_id: number;
+  thinking_enabled?: boolean;
+  search_enabled?: boolean;
+  user_options?: null;
+}
+
+export async function regenerateMessage(
+  body: RegenerateBody,
+  onEvent: (obj: Record<string, any>) => void,
+  signal?: AbortSignal,
+): Promise<void> {
+  const powHeader = await withPow('/api/v0/chat/completion');
+  const headers: Record<string, string> = {
+    'Content-Type': 'application/json',
+    'User-Agent': navigator.userAgent,
+    'X-App-Version': '2025.04.25',
+    'X-Ds-Pow-Response': powHeader,
+    Authorization: `Bearer ${_token}`,
+  };
+  const fullBody = {
+    thinking_enabled: true,
+    search_enabled: true,
+    user_options: null,
+    ...body,
+  };
+  await streamSse(`${BASE}/chat/regenerate`, headers, fullBody, onEvent, signal);
 }
 
 // ── SSE 流式读取（原生桥 / fetch 双后端）──

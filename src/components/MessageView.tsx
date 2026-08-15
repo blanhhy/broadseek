@@ -5,7 +5,8 @@ import { Fragment, forwardRef, memo, useCallback, useEffect, useImperativeHandle
 import { createPortal } from 'react-dom';
 import type { NormalizedMessage } from '../core/api/types';
 import { buildIndex, branchSiblings, switchBranchPath, activePathOf } from '../core/api/tree';
-import { updateCurrentMessage, sendCompletion, fetchHistory, normalizeMessage } from '../core/api/client';
+import { regenerateMessage, fetchHistory, normalizeMessage } from '../core/api/client';
+import { DeltaParser, nextTempId } from '../core/api/delta';
 import { useConversation } from '../core/store';
 import Markdown from './Markdown';
 import FileAttachments from './FileAttachments';
@@ -270,11 +271,35 @@ const MessageView = forwardRef<MessageViewHandle, Props>(function MessageView(
   const setData = useConversation((s) => s.setData);
   const inputTall = useConversation((s) => s.inputTall);
   const streaming = useConversation((s) => s.streaming);
+  const setStreaming = useConversation((s) => s.setStreaming);
   const [visibleIds, setVisibleIds] = useState<number[]>([]);
   const [renderCount, setRenderCount] = useState(0);
   const [atBottom, setAtBottom] = useState(true);
   const [regenerating, setRegenerating] = useState(false);
+  const [toast, setToast] = useState<string | null>(null);
+  const [toastClosing, setToastClosing] = useState(false);
+  const toastTimer = useRef<number | null>(null);
+  const closeTimer = useRef<number | null>(null);
+  useEffect(() => () => {
+    if (toastTimer.current) window.clearTimeout(toastTimer.current);
+    if (closeTimer.current) window.clearTimeout(closeTimer.current);
+  }, []);
   const btnRef = useRef<HTMLButtonElement>(null);
+
+  // 显示居中 Toast（放大进入，约 1s 后缩小退出）
+  const showToast = (msg: string) => {
+    setToastClosing(false);
+    setToast(msg);
+    if (toastTimer.current) window.clearTimeout(toastTimer.current);
+    if (closeTimer.current) window.clearTimeout(closeTimer.current);
+    toastTimer.current = window.setTimeout(() => {
+      setToastClosing(true);
+      closeTimer.current = window.setTimeout(() => {
+        setToast(null);
+        setToastClosing(false);
+      }, 150);
+    }, 1000);
+  };
 
   // 索引 + 活跃路径消息
   const { idx, pathMessages } = useMemo(() => {
@@ -308,31 +333,113 @@ const MessageView = forwardRef<MessageViewHandle, Props>(function MessageView(
     });
   }, [sessionId, setData]);
 
-  // 重新生成：在最新 AI 消息的父提问下新建 AI 回复
+  // 重新生成：调 /chat/regenerate 在父提问下创建新 AI 分支。
+  // 乐观 UI：追加虚拟 AI 消息并切换到该分支（原回复保留为兄弟分支，切换器数量 +1），
+  // 流式写入虚拟消息，完成后用服务器真实数据替换；失败撤回虚拟消息并恢复原路径。
   const handleRegenerate = useCallback(async (m: NormalizedMessage) => {
-    if (!sessionId || regenerating) return;
-    if (m.parent_id === null) return;
-    const parent = idx.byId.get(m.parent_id);
-    if (!parent) return;
+    if (!sessionId || regenerating || streaming) return;
+    if (m.id < 0 || m.parent_id === null) return; // 虚拟消息（编辑/生成中）不可再生成
+    const aiIdx = activePath.lastIndexOf(m.id);
+    if (aiIdx < 0) return;
+    const prevPath = activePath;
     setRegenerating(true);
+    setStreaming(true);
+
+    const tempAiId = nextTempId();
+    useConversation.setState((s) => ({
+      messages: [
+        ...s.messages,
+        {
+          id: tempAiId,
+          parent_id: m.parent_id,
+          role: 'ASSISTANT',
+          content: '',
+          thinking: null,
+          model: '',
+          status: 'FINISHED',
+          token_usage: null,
+          thinking_enabled: m.thinking_enabled ?? true,
+          search_enabled: m.search_enabled ?? true,
+          ban_edit: false,
+          ban_regenerate: false,
+          files: [],
+          feedback: null,
+          search_results: null,
+          tips: [],
+          inserted_at: Date.now() / 1000,
+        },
+      ],
+      activePath: [...s.activePath.slice(0, aiIdx), tempAiId],
+      currentMessageId: tempAiId,
+    }));
+
     try {
-      await sendCompletion(
-        { chat_session_id: sessionId, parent_message_id: parent.id, prompt: parent.content },
-        () => {},
+      const parser = new DeltaParser();
+      let seenThink = false;
+      let thinkContent = '';
+      let thinkElapsed: number | null = null;
+      let bodyContent = '';
+      const applyStream = () => {
+        useConversation.setState((s) => ({
+          messages: s.messages.map((x) =>
+            x.id === tempAiId
+              ? {
+                  ...x,
+                  content: bodyContent,
+                  thinking: seenThink ? { content: thinkContent, elapsed_secs: thinkElapsed } : null,
+                }
+              : x,
+          ),
+        }));
+      };
+      await regenerateMessage(
+        {
+          chat_session_id: sessionId,
+          child_message_id: m.id,
+          thinking_enabled: m.thinking_enabled ?? true,
+          search_enabled: m.search_enabled ?? true,
+        },
+        (ev) => {
+          for (const op of parser.parse(ev)) {
+            const p = op.path;
+            const v = op.value;
+            if (p === 'response/thinking_content') {
+              if (typeof v === 'string') {
+                seenThink = true;
+                thinkContent = op.op === 'SET' ? v : thinkContent + v;
+              }
+            } else if (p === 'response/thinking_elapsed_secs' && typeof v === 'number') {
+              seenThink = true;
+              thinkElapsed = v;
+            } else if (p === 'response/content') {
+              if (typeof v === 'string') {
+                bodyContent = op.op === 'SET' ? v : bodyContent + v;
+              }
+            }
+          }
+          applyStream();
+        },
       );
       await refreshFromServer();
     } catch (e: any) {
       console.error('重新生成失败', e);
+      useConversation.setState((s) => ({
+        messages: s.messages.filter((x) => x.id !== tempAiId),
+        activePath: prevPath,
+        currentMessageId: prevPath[prevPath.length - 1] ?? null,
+      }));
+      showToast('重新生成失败');
     } finally {
       setRegenerating(false);
+      setStreaming(false);
     }
-  }, [sessionId, regenerating, idx, refreshFromServer]);
+  }, [sessionId, regenerating, streaming, activePath, refreshFromServer]);
 
   const handleCopy = useCallback(async (text: string) => {
     try { await navigator.clipboard.writeText(text); } catch { /* 剪贴板不可用时静默 */ }
   }, []);
 
-  // 编辑重发：路径在编辑点截断并追加虚拟分支（尾部为负 id 且短于旧路径），
+  // 编辑重发/重新生成：路径尾部切换为虚拟消息（负 id，可能截断也可能等长替换），
   // 以及流式结束后虚拟路径被服务器真实数据替换（上次尾部为负 id），
   // 均视作分支切换：置位 forceFullRender 一次性渲染整条路径，避免 renderCount 重置导致视口内容突变
   const prevPathRef = useRef<number[]>(activePath);
@@ -341,7 +448,7 @@ const MessageView = forwardRef<MessageViewHandle, Props>(function MessageView(
     prevPathRef.current = activePath;
     const tail = activePath[activePath.length - 1];
     const prevTail = prev[prev.length - 1];
-    if ((activePath.length < prev.length && tail !== undefined && tail < 0) || prevTail < 0) {
+    if ((tail !== undefined && tail < 0) || prevTail < 0) {
       forceFullRender.current = true;
     }
   }, [activePath]);
@@ -402,11 +509,6 @@ const MessageView = forwardRef<MessageViewHandle, Props>(function MessageView(
     anchorPosRef.current = relPos;
     anchorTargetRef.current = targetId;
     setActivePath(newPath, newLeaf);
-    if (sessionId) {
-      updateCurrentMessage(sessionId, newLeaf).catch((e) =>
-        console.error('设置服务器当前位置失败', e),
-      );
-    }
   };
 
   // 外部跳转定位（悬浮原点）
@@ -625,7 +727,7 @@ const MessageView = forwardRef<MessageViewHandle, Props>(function MessageView(
                   onSwitch={(t) => switchTo(m.id, t)}
                   onCopy={() => lastAi && handleCopy(lastAi.content)}
                   onRegenerate={() => lastAi && handleRegenerate(lastAi)}
-                  regenerating={regenerating}
+                  regenerating={regenerating || streaming}
                   regenDisabled={siblings.length >= 6}
                 />
               ) : (
@@ -654,6 +756,11 @@ const MessageView = forwardRef<MessageViewHandle, Props>(function MessageView(
           </svg>
         </button>
       )}
+      {toast &&
+        createPortal(
+          <div className={`toast-center${toastClosing ? ' toast-center--out' : ''}`}>{toast}</div>,
+          document.body,
+        )}
     </div>
   );
 });
