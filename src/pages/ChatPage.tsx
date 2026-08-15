@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { useAuth, useConversation } from '../core/store';
 import { fetchAllSessions, fetchHistory, normalizeMessage } from '../core/api/client';
+import { loadSessionListCache, saveSessionListCache } from '../core/api/sessionCache';
 import type { ChatSession } from '../core/api/types';
 import { buildIndex, activePathOf } from '../core/api/tree';
 import ConversationList from '../components/ConversationList';
@@ -32,14 +33,36 @@ export default function ChatPage() {
 
   const conv = useConversation();
 
-  // 加载全部会话
-  const loadSessions = () => {
-    fetchAllSessions({ count: 100 })
-      .then((d) => setSessions(d))
-      .catch((e) => console.error('加载会话失败', e));
+  // 回到未选择状态：清空当前会话数据（会话被删除时使用）
+  const resetConversation = () => {
+    conv.setData({ session: null, messages: [], activePath: [], currentMessageId: null });
+    conv.setConversation(null);
+  };
+
+  // 加载会话列表
+  //  - preferCache=true（启动）：先渲染本地缓存秒开，再后台拉取同步；失败静默保留缓存
+  //  - preferCache=false（下拉刷新/删除/重命名后）：直接拉取最新，立即生效
+  // 拉取成功后检测：当前打开的会话已不在列表（其他端删除）→ 回到未选择状态
+  const loadSessions = async (preferCache = false) => {
+    if (preferCache) {
+      const cached = loadSessionListCache(token);
+      if (cached && cached.sessions.length > 0) setSessions(cached.sessions);
+    }
+    try {
+      const d = await fetchAllSessions({ count: 100 });
+      saveSessionListCache(token, d);
+      setSessions(d);
+      if (conv.sessionId && !d.some((s) => s.id === conv.sessionId)) {
+        resetConversation();
+      }
+    } catch (e) {
+      if (!preferCache) console.error('加载会话失败', e);
+      // preferCache 失败：保留缓存渲染（本地优先，异步同步失败静默）
+    }
   };
   useEffect(() => {
-    loadSessions();
+    loadSessions(true);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [token]);
 
   // 打开会话：优先命中缓存，否则拉取全部消息并解析
@@ -137,7 +160,8 @@ export default function ChatPage() {
           sessions={sessions}
           currentId={conv.sessionId}
           onOpen={openSession}
-          onSessionsChange={loadSessions}
+          onSessionsChange={() => loadSessions(false)}
+          onRefresh={() => loadSessions(false)}
         />
       </div>
 

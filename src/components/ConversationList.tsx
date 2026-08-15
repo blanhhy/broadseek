@@ -9,6 +9,7 @@ interface Props {
   currentId: string | null;
   onOpen: (id: string) => void;
   onSessionsChange: () => void;
+  onRefresh: () => void | Promise<void>; // 下拉刷新：立即重新拉取会话列表
 }
 
 // 按时间分组标签
@@ -35,9 +36,12 @@ function fmtTime(ts: number): string {
   return `${d.getMonth() + 1}/${d.getDate()}`;
 }
 
-export default function ConversationList({ sessions, currentId, onOpen, onSessionsChange }: Props) {
+export default function ConversationList({ sessions, currentId, onOpen, onSessionsChange, onRefresh }: Props) {
   const [keyword, setKeyword] = useState('');
   const [busyId, setBusyId] = useState<string | null>(null);
+  // 下拉刷新：pull.dist 为拖拽距离（px），refreshing 为请求中
+  const [pull, setPull] = useState({ dist: 0, refreshing: false });
+  const refreshingRef = useRef(false);
   // 居中 Toast（替代原先常驻侧栏顶部的横幅）：自动显现约 1s 后消失
   const [toast, setToast] = useState<string | null>(null);
   const [toastClosing, setToastClosing] = useState(false);
@@ -70,6 +74,10 @@ export default function ConversationList({ sessions, currentId, onOpen, onSessio
   const [menuTop, setMenuTop] = useState(0);
   const menuRef = useRef<HTMLDivElement>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
+  // 下拉刷新 DOM 引用（拖动时直接改 transform，避免每帧 setState 重渲染 602 项列表）
+  const listRef = useRef<HTMLDivElement>(null);
+  const ptrRef = useRef<HTMLDivElement>(null);
+  const PTR_H = 44; // 指示器高度（px）
   // 内联重命名编辑状态（window.prompt 在部分环境被禁用，改用内联输入）
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editValue, setEditValue] = useState('');
@@ -184,6 +192,106 @@ export default function ConversationList({ sessions, currentId, onOpen, onSessio
     setEditingId(null);
   };
 
+  // 下拉刷新：调用 onRefresh（立即重新拉取会话列表）
+  const handleRefresh = async () => {
+    if (refreshingRef.current) return;
+    refreshingRef.current = true;
+    setPull({ dist: 0, refreshing: true });
+    // 刷新中：列表固定下移露出指示器
+    if (listRef.current) {
+      listRef.current.style.transition = 'transform 0.2s ease';
+      listRef.current.style.transform = `translateY(${PTR_H}px)`;
+    }
+    if (ptrRef.current) {
+      ptrRef.current.style.transition = 'transform 0.2s ease';
+      ptrRef.current.style.transform = 'translateY(0)';
+      const label = ptrRef.current.querySelector('span');
+      if (label) label.textContent = '刷新中…';
+    }
+    try {
+      await onRefresh();
+    } finally {
+      refreshingRef.current = false;
+      setPull({ dist: 0, refreshing: false });
+      if (listRef.current) {
+        listRef.current.style.transition = 'transform 0.25s ease';
+        listRef.current.style.transform = 'translateY(0)';
+      }
+      if (ptrRef.current) {
+        ptrRef.current.style.transition = 'transform 0.25s ease';
+        ptrRef.current.style.transform = `translateY(-${PTR_H}px)`;
+        const label = ptrRef.current.querySelector('span');
+        if (label) label.textContent = '下拉刷新';
+      }
+    }
+  };
+  const handleRefreshRef = useRef<() => void>(() => {});
+  handleRefreshRef.current = () => { void handleRefresh(); };
+
+  // 下拉刷新手势（移动端）：列表滚到顶后继续下拉触发刷新。
+  // 拖动中直接改 DOM transform（不 setState，避免重渲染数百条列表）。
+  useEffect(() => {
+    const sc = scrollRef.current;
+    if (!sc) return;
+    let startY: number | null = null;
+    let dist = 0;
+    const onStart = (e: TouchEvent) => {
+      if (menu || refreshingRef.current || sc.scrollTop > 0) { startY = null; return; }
+      startY = e.touches[0].clientY;
+    };
+    const onMove = (e: TouchEvent) => {
+      if (startY == null) return;
+      const dy = e.touches[0].clientY - startY;
+      if (dy <= 0) {
+        if (dist !== 0) { dist = 0; resetPullDom(); }
+        return;
+      }
+      e.preventDefault(); // 阻止列表随手指滚动
+      dist = Math.min(120, dy * 0.5);
+      if (listRef.current) {
+        listRef.current.style.transition = 'none';
+        listRef.current.style.transform = `translateY(${dist}px)`;
+      }
+      if (ptrRef.current) {
+        ptrRef.current.style.transition = 'none';
+        ptrRef.current.style.transform = `translateY(${dist - PTR_H}px)`;
+        const label = ptrRef.current.querySelector('span');
+        if (label) label.textContent = dist >= 64 ? '松开刷新' : '下拉刷新';
+      }
+    };
+    const onEnd = () => {
+      if (startY == null) return;
+      const should = dist >= 64;
+      startY = null;
+      dist = 0;
+      resetPullDom();
+      if (should) handleRefreshRef.current();
+    };
+    const resetPullDom = () => {
+      if (listRef.current) {
+        listRef.current.style.transition = 'transform 0.25s ease';
+        listRef.current.style.transform = 'translateY(0)';
+      }
+      if (ptrRef.current) {
+        ptrRef.current.style.transition = 'transform 0.25s ease';
+        ptrRef.current.style.transform = `translateY(-${PTR_H}px)`;
+        const label = ptrRef.current.querySelector('span');
+        if (label) label.textContent = '下拉刷新';
+      }
+    };
+    sc.addEventListener('touchstart', onStart, { passive: true });
+    sc.addEventListener('touchmove', onMove, { passive: false });
+    sc.addEventListener('touchend', onEnd, { passive: true });
+    sc.addEventListener('touchcancel', onEnd, { passive: true });
+    return () => {
+      sc.removeEventListener('touchstart', onStart);
+      sc.removeEventListener('touchmove', onMove);
+      sc.removeEventListener('touchend', onEnd);
+      sc.removeEventListener('touchcancel', onEnd);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [menu]);
+
   const openMenu = (e: React.MouseEvent, s: ChatSession) => {
     e.preventDefault();
     e.stopPropagation();
@@ -230,6 +338,13 @@ export default function ConversationList({ sessions, currentId, onOpen, onSessio
       </div>
 
       <div className="conv-scroll" ref={scrollRef}>
+        {/* 下拉刷新指示器：默认上移隐藏，下拉/刷新时随列表下移露出 */}
+        <div className="conv-ptr" ref={ptrRef}>
+          <svg className={`conv-ptr-icon${pull.refreshing ? ' spin' : ''}`} width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <path d="M12 5v14M5 12l7 7 7-7" />
+          </svg>
+          <span>{pull.refreshing ? '刷新中…' : '下拉刷新'}</span>
+        </div>
         {grouped.length === 0 && (
           <div className="conv-empty">暂无对话</div>
         )}
