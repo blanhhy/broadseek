@@ -82,7 +82,24 @@ function Bubble({ m }: { m: NormalizedMessage }) {
     >
       {!isUser && m.thinking && (
         <details className="msg-thinking">
-          <summary>
+          <summary
+            onClick={(e) => {
+              // 收纳 thinking 块时保持标题的屏幕位置：关闭瞬间 body 塌缩会让标题上移，
+              // 通过补偿滚动把标题拉回原位置（展开时 body 向下延伸，标题本就不动，无需处理）。
+              if (!e.defaultPrevented && (e.currentTarget.parentElement as HTMLDetailsElement).open) {
+                const sc = document.querySelector('.msg-scroll');
+                const el = e.currentTarget;
+                if (sc) {
+                  const before = el.getBoundingClientRect().top - sc.getBoundingClientRect().top;
+                  const details = el.parentElement as HTMLDetailsElement;
+                  details.open = false;
+                  const after = el.getBoundingClientRect().top - sc.getBoundingClientRect().top;
+                  sc.scrollTop += after - before;
+                  e.preventDefault(); // 已手动关闭，阻止默认再触发一次
+                }
+              }
+            }}
+          >
             <span>
               {m.thinking.elapsed_secs != null
                 ? `已思考 ${Math.round(m.thinking.elapsed_secs * 10) / 10} 秒`
