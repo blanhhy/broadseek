@@ -214,10 +214,14 @@ textarea { font: inherit; resize: none; }
   left: 0;
   border-right: 1px solid var(--border);
   border-left: none;
-  transform: translateX(-100%);
+  /* transform 由 --drawer-x 控制：默认 -100%（关闭），拖拽时 JS 写入 px 位移 */
+  transform: translateX(var(--drawer-x, -100%));
 }
-.drawer-right { right: 0; transform: translateX(100%); }
-.drawer.open { transform: translateX(0); }
+.drawer-right {
+  right: 0;
+  transform: translateX(var(--drawer-x, 100%));
+}
+.drawer.open { transform: translateX(var(--drawer-x, 0)); }
 
 .scrim {
   position: absolute;
