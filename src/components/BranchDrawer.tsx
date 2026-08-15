@@ -111,9 +111,12 @@ function BranchItem({
           )}
         </div>
       </div>
-      {/* 元信息：卡片下方（卡片外） */}
+      {/* 元信息：卡片下方（卡片外）；时间+深度固定左对齐，分支切换器靠右 */}
       <div className="branch-meta">
-        <span className="branch-time">{fmtTime(entry.insertedAt)}</span>
+        <span className="branch-meta-left">
+          <span className="branch-time">{fmtTime(entry.insertedAt)}</span>
+          <span className="branch-depth">{entry.path.length}条消息</span>
+        </span>
         {/* 微缩分支切换器：仅在多个 AI 回复之间切换预览 */}
         {replies.length > 1 && (
           <div className="branch-mini-switch">

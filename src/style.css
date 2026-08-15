@@ -491,7 +491,13 @@ textarea { font: inherit; resize: none; }
   font-size: 11px;
   color: var(--text-faint);
 }
+.branch-meta-left {
+  display: inline-flex;
+  align-items: center;
+  flex: 0 0 auto;
+}
 .branch-time { flex: 0 0 auto; }
+.branch-depth { flex: 0 0 auto; margin-left: 6px; font-variant-numeric: tabular-nums; }
 
 /* 微缩分支切换器：切换 AI 消息预览 */
 .branch-mini-switch {
