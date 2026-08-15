@@ -286,9 +286,25 @@ textarea { font: inherit; resize: none; }
 .conv-ptr-icon.spin { animation: ptr-spin 0.8s linear infinite; }
 @keyframes ptr-spin { to { transform: rotate(360deg); } }
 .conv-group-label {
+  position: sticky;
+  top: 0;
+  z-index: 3;
   padding: 12px 12px 6px;
   font-size: 12px;
   color: var(--text-faint);
+  /* 钉住时遮挡下方滚过的会话项 */
+  background: var(--bg-elev);
+}
+/* 钉住标题下边缘羽化：减少与下方会话项衔接的突兀感 */
+.conv-group-label::after {
+  content: '';
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 100%;
+  height: 10px;
+  background: linear-gradient(to bottom, var(--bg-elev), transparent);
+  pointer-events: none;
 }
 .conv-item {
   padding: 6px 12px;
@@ -757,6 +773,35 @@ textarea { font: inherit; resize: none; }
   gap: 8px;
   font-size: 15px;
   color: var(--text-dim);
+  /* 展开后上滑时标题钉在消息区顶部，方便随时收起；
+     负 top = -padding-top(16px)，让标题真正贴住顶栏（0 距离） */
+  position: sticky;
+  top: -16px;
+  z-index: 2;
+  background: var(--bg);
+}
+/* sticky 标题向上延伸背景，覆盖滚动容器顶部的 padding 区域以及上移的 16px，
+   避免上一段内容从标题上方漏出 */
+.msg-thinking summary::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 100%;
+  height: 32px;
+  background: inherit;
+  pointer-events: none;
+}
+/* 钉住标题下边缘羽化：背景色渐变到透明，减少与下方内容衔接的突兀感 */
+.msg-thinking summary::after {
+  content: '';
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 100%;
+  height: 10px;
+  background: linear-gradient(to bottom, var(--bg), transparent);
+  pointer-events: none;
 }
 .msg-thinking summary::-webkit-details-marker { display: none; }
 .msg-thinking summary .think-arrow {
