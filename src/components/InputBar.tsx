@@ -44,6 +44,15 @@ export default function InputBar({ sessionId }: Props) {
     }, 1000);
   };
 
+  // 编辑结束（点蒙版取消 / 发送完成）时清空输入框，避免残留被编辑内容
+  const prevEditing = useRef<number | null>(editingMessageId);
+  useEffect(() => {
+    if (prevEditing.current != null && editingMessageId == null) {
+      setText('');
+    }
+    prevEditing.current = editingMessageId;
+  }, [editingMessageId]);
+
   // 随内容自动增高，达到 max-height 后内部滚动
   const autoResize = () => {
     const ta = taRef.current;

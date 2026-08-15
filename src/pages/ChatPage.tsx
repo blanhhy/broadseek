@@ -165,20 +165,21 @@ export default function ChatPage() {
           />
         )}
 
+        {isOpen && !conv.editingMessageId && (
+          <FloatingDots
+            messages={conv.messages}
+            activePath={conv.activePath}
+            visibleIds={visibleIds}
+            currentViewedId={viewedId}
+            currentMessageId={conv.currentMessageId}
+            onJump={(id) => listRef.current?.scrollToMessage(id)}
+          />
+        )}
+
         {isOpen && (
-          <>
-            <FloatingDots
-              messages={conv.messages}
-              activePath={conv.activePath}
-              visibleIds={visibleIds}
-              currentViewedId={viewedId}
-              currentMessageId={conv.currentMessageId}
-              onJump={(id) => listRef.current?.scrollToMessage(id)}
-            />
-            <InputBar
-              sessionId={conv.sessionId!}
-            />
-          </>
+          <InputBar
+            sessionId={conv.sessionId!}
+          />
         )}
       </main>
     </div>

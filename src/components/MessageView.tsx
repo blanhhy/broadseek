@@ -54,6 +54,7 @@ function Bubble({ m }: { m: NormalizedMessage }) {
   const isUser = m.role === 'USER';
   const setEditingMessageId = useConversation((s) => s.setEditingMessageId);
   const activePath = useConversation((s) => s.activePath);
+  const editingMessageId = useConversation((s) => s.editingMessageId);
 
   // 长按用户消息 → 编辑重发：将消息内容填入输入框
   const handleEdit = () => {
@@ -74,7 +75,7 @@ function Bubble({ m }: { m: NormalizedMessage }) {
 
   return (
     <div
-      className={`msg-row ${isUser ? 'user' : 'ai'}`}
+      className={`msg-row ${isUser ? 'user' : 'ai'}${m.id === editingMessageId ? ' editing' : ''}`}
       id={`msg-${m.id}`}
       onContextMenu={isUser && !m.ban_edit ? (e) => { e.preventDefault(); handleEdit(); } : undefined}
     >
@@ -272,6 +273,8 @@ const MessageView = forwardRef<MessageViewHandle, Props>(function MessageView(
   const inputTall = useConversation((s) => s.inputTall);
   const streaming = useConversation((s) => s.streaming);
   const setStreaming = useConversation((s) => s.setStreaming);
+  const editingMessageId = useConversation((s) => s.editingMessageId);
+  const setEditingMessageId = useConversation((s) => s.setEditingMessageId);
   const [visibleIds, setVisibleIds] = useState<number[]>([]);
   const [renderCount, setRenderCount] = useState(0);
   const [atBottom, setAtBottom] = useState(true);
@@ -702,7 +705,14 @@ const MessageView = forwardRef<MessageViewHandle, Props>(function MessageView(
   };
 
   return (
-    <div className="msg-wrap">
+    <div className={`msg-wrap${editingMessageId != null ? ' editing' : ''}`}>
+      {editingMessageId != null && (
+        <div
+          className="edit-mask"
+          onClick={() => setEditingMessageId(null)}
+          aria-hidden="true"
+        />
+      )}
       <div className="msg-scroll" ref={scrollRef} onScroll={onScroll}>
         {loading && <div className="msg-state">加载中…</div>}
         {!loading && error && (
