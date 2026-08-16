@@ -165,7 +165,7 @@ function BranchSwitcher({
           <path d="M7 1.5L2.5 6 7 10.5" />
         </svg>
       </button>
-      <span className="switcher-label">{index + 1}／{siblings.length}</span>
+      <span className="switcher-label">{index + 1}/{siblings.length}</span>
       <button
         className="switcher-btn"
         disabled={!next || disabled}
@@ -256,11 +256,11 @@ function MessageActions({
           title={copied ? '已复制' : '复制原始文本'}
         >
           {copied ? (
-            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
               <path d="M20 6 9 17l-5-5" />
             </svg>
           ) : (
-            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
               <rect x="9" y="9" width="12" height="12" rx="2" /><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1" />
             </svg>
           )}
@@ -274,7 +274,7 @@ function MessageActions({
           style={regenDisabled ? { opacity: 0.4, cursor: 'default' } : undefined}
           title={regenerating ? '生成中…' : regenDisabled ? '已达到生成次数上限' : '重新生成'}
         >
-          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
             <path d="M21 12a9 9 0 11-2.6-6.3" /><path d="M21 3v6h-6" />
           </svg>
         </button>

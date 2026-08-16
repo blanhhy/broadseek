@@ -666,8 +666,8 @@ textarea { font: inherit; resize: none; }
   align-items: center;
   gap: 6px;
   color: var(--text-faint);
-  /* 贴近其所属消息：抵消 .msg-scroll 的 gap(24px)，留出约 6px */
-  margin-top: -18px;
+  /* 贴近其所属消息：抵消 .msg-scroll 的 gap(24px) */
+  margin-top: -12px;
 }
 .msg-row.user + .branch-switcher { justify-content: flex-end; }
 .switcher-btn {
@@ -676,14 +676,13 @@ textarea { font: inherit; resize: none; }
   justify-content: center;
   padding: 0px 2px;
   color: var(--text-faint);
-  border-radius: 4px;
 }
 .switcher-btn:hover:not(:disabled) { color: var(--text); }
 .switcher-btn:disabled { opacity: 0.35; cursor: default; }
 .switcher-label {
-  font-size: 12px;
+  font-size: 13px;
   text-align: center;
-  letter-spacing: 0.06em;
+  letter-spacing: 0.35em;
 }
 
 /* ── 最新 AI 消息操作行：左为分支切换器+复制，右为重新生成 ── */
@@ -692,27 +691,25 @@ textarea { font: inherit; resize: none; }
   align-items: center;
   justify-content: space-between;
   gap: 8px;
-  /* 贴近其所属 AI 消息：抵消 .msg-scroll 的 gap(24px)，留出约 6px */
-  margin-top: -18px;
+  /* 贴近其所属 AI 消息：抵消 .msg-scroll 的 gap(24px) */
+  margin-top: -12px;
   padding: 0 2px;
   color: var(--text-faint);
 }
-.msg-actions-left { display: flex; align-items: center; gap: 8px; }
-.msg-actions-right { display: flex; align-items: center; }
+.msg-actions-left { display: flex; padding-left: 4px; align-items: center; gap: 8px; }
+.msg-actions-right { display: flex; padding-right: 4px; align-items: center; }
 /* 操作栏默认隐藏（不占高度），点击 AI 气泡展开/收起 */
 .msg-actions.hidden { display: none; }
 /* 操作栏内嵌切换器与独立切换器水平对齐：抵消 .msg-actions 的 padding-left 2px */
-.msg-actions-left .branch-switcher { margin-left: -2px; }
+.msg-actions-left .branch-switcher { margin-left: -6px; }
 /* 操作行内嵌的分支切换器不再用负 margin 贴消息（由操作行统一留白） */
 .msg-actions .branch-switcher { margin-top: 0; }
 .msg-action-btn {
   display: inline-flex;
   align-items: center;
   gap: 4px;
-  font-size: 12px;
   color: var(--text-faint);
   padding: 2px 4px;
-  border-radius: 6px;
 }
 .msg-action-btn:hover:not(:disabled) { color: var(--text); background: var(--bg-hover); }
 .msg-action-btn:disabled { opacity: 0.4; cursor: default; }
