@@ -23,7 +23,8 @@
   --input-bg-hover: #ececef;
   --input-shadow1: 0 -0.8px 0 0 #f0f0f0;
   --input-shadow2: 0 4px 12px 2px rgba(0, 0, 0, 0.08);
-  --dot-bg: #c4c4cc;
+  --dot-bg: #d9d9de;
+  --dot-bg-hover: #b0b0b8;
   /* Toast：背景与界面背景相反（浅色界面用深色，深色界面用浅色） */
   --toast-bg: #2a2a30;
   --toast-text: #f5f5f5;
@@ -63,7 +64,8 @@
     --input-bg-hover: #2a2a33;
     --input-shadow1: none;
     --input-shadow2: none;
-    --dot-bg: #90909c;
+    --dot-bg: #70707a;
+    --dot-bg-hover: #8b8b96;
     /* Toast：背景与界面背景相反（深色界面用浅色，浅色界面用深色） */
     --toast-bg: #ececef;
     --toast-text: #191919;
@@ -697,6 +699,8 @@ textarea { font: inherit; resize: none; }
 }
 .msg-actions-left { display: flex; align-items: center; gap: 8px; }
 .msg-actions-right { display: flex; align-items: center; }
+/* 操作栏默认隐藏（不占高度），点击 AI 气泡展开/收起 */
+.msg-actions.hidden { display: none; }
 /* 操作栏内嵌切换器与独立切换器水平对齐：抵消 .msg-actions 的 padding-left 2px */
 .msg-actions-left .branch-switcher { margin-left: -2px; }
 /* 操作行内嵌的分支切换器不再用负 margin 贴消息（由操作行统一留白） */
@@ -839,16 +843,30 @@ textarea { font: inherit; resize: none; }
   position: relative;
   padding: 0;
   width: 10px;
-  height: 10px;
-  border-radius: 50%;
+  height: 10px; /* 容器保持原直径：点击范围与点中心间距（gap 15px）不变 */
+  border-radius: 2px;
+}
+/* 视觉点：小的圆角矩形，高度为原直径的 1/3 */
+.dot::before {
+  content: '';
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 10px;
+  height: 3px;
+  border-radius: 2px;
   background: var(--dot-bg);
-  transition: transform 0.15s;
+  transform: translate(-50%, -50%);
+  transition: transform 0.15s, background 0.15s;
 }
-.dot-current {
+/* 激活态：蓝色、放大、不加阴影 */
+.dot-current::before {
   background: var(--accent);
-  box-shadow: 0 0 0 3px var(--accent-bg);
+  transform: translate(-50%, -50%) scale(1.4);
 }
-.dot:hover { transform: scale(1.35); }
+/* 预览（hover）：不放大，只加深颜色 */
+.dot:hover::before { background: var(--dot-bg-hover); }
+.dot-current:hover::before { background: var(--accent); }
 .dot-preview {
   position: absolute;
   right: calc(100% + 8px);

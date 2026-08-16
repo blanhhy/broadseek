@@ -51,7 +51,7 @@ interface Props {
   onViewedChange?: (id: number | null) => void;
 }
 
-function Bubble({ m }: { m: NormalizedMessage }) {
+function Bubble({ m, onToggleActions }: { m: NormalizedMessage; onToggleActions?: () => void }) {
   const isUser = m.role === 'USER';
   const setEditingMessageId = useConversation((s) => s.setEditingMessageId);
   const activePath = useConversation((s) => s.activePath);
@@ -74,10 +74,19 @@ function Bubble({ m }: { m: NormalizedMessage }) {
     }
   };
 
+  // 点击 AI 消息展开/收起操作栏；忽略点击可交互元素（链接/按钮/thinking 标题等）内部
+  const handleToggle = (e: React.MouseEvent) => {
+    if (!onToggleActions) return;
+    const t = e.target as HTMLElement;
+    if (t.closest('a, button, summary, input, textarea')) return;
+    onToggleActions();
+  };
+
   return (
     <div
       className={`msg-row ${isUser ? 'user' : 'ai'}${m.id === editingMessageId ? ' editing' : ''}`}
       id={`msg-${m.id}`}
+      onClick={onToggleActions ? handleToggle : undefined}
       onContextMenu={isUser && !m.ban_edit ? (e) => { e.preventDefault(); handleEdit(); } : undefined}
     >
       {!isUser && m.thinking && (
@@ -174,6 +183,7 @@ function BranchSwitcher({
 // 最新 AI 消息下方的操作行：左为分支切换器 + 复制原始文本，右为重新生成。
 // 分支切换器仅在存在同父兄弟时显示，与复制按钮同一行。
 function MessageActions({
+  hidden,
   siblings,
   index,
   onSwitch,
@@ -182,6 +192,7 @@ function MessageActions({
   regenerating,
   regenDisabled,
 }: {
+  hidden?: boolean;
   siblings: NormalizedMessage[];
   index: number;
   onSwitch: (targetId: number) => void;
@@ -233,7 +244,7 @@ function MessageActions({
   };
 
   return (
-    <div className="msg-actions">
+    <div className={`msg-actions${hidden ? ' hidden' : ''}`}>
       <div className="msg-actions-left">
         {siblings.length > 1 && (
           <BranchSwitcher siblings={siblings} index={index} onSwitch={onSwitch} />
@@ -273,6 +284,90 @@ function MessageActions({
           <div className={`toast-center${closing ? ' toast-center--out' : ''}`}>{toast}</div>,
           document.body,
         )}
+    </div>
+  );
+}
+
+// 单条消息块：气泡 + 操作栏。AI 消息操作栏默认隐藏（不占高度），
+// 点击气泡展开/收起；有分支切换器时操作栏内一并显示（合并）。
+function MessageBlock({
+  m,
+  siblings,
+  index,
+  onSwitch,
+  onCopy,
+  onRegenerate,
+  regenerating,
+  regenDisabled,
+  scrollEl,
+  streaming,
+  isLast,
+}: {
+  m: NormalizedMessage;
+  siblings: NormalizedMessage[];
+  index: number;
+  onSwitch: (targetId: number) => void;
+  onCopy: () => void;
+  onRegenerate: () => void;
+  regenerating: boolean;
+  regenDisabled: boolean;
+  scrollEl: HTMLElement | null;
+  streaming: boolean;
+  isLast: boolean;
+}) {
+  const [expanded, setExpanded] = useState(false);
+  const blockRef = useRef<HTMLDivElement>(null);
+  const prevBubbleTop = useRef<number | null>(null);
+
+  // 切换操作栏显隐：先记录气泡相对滚动容器的位置，渲染提交后补偿 scrollTop，
+  // 让消息正文在展开/收起期间保持屏幕位置（操作栏在气泡下方，其显隐会改变块高度引发重排）。
+  const toggle = useCallback(() => {
+    if (scrollEl && blockRef.current) {
+      const bubble = blockRef.current.querySelector('.msg-bubble');
+      if (bubble) {
+        prevBubbleTop.current =
+          bubble.getBoundingClientRect().top - scrollEl.getBoundingClientRect().top;
+      }
+    }
+    setExpanded((v) => !v);
+  }, [scrollEl]);
+
+  useLayoutEffect(() => {
+    if (!scrollEl || !blockRef.current || prevBubbleTop.current == null) return;
+    const bubble = blockRef.current.querySelector('.msg-bubble');
+    if (!bubble) return;
+    const top = bubble.getBoundingClientRect().top - scrollEl.getBoundingClientRect().top;
+    scrollEl.scrollTop += top - prevBubbleTop.current;
+    prevBubbleTop.current = null;
+  }, [expanded, scrollEl]);
+
+  const isAi = m.role === 'ASSISTANT';
+  return (
+    <div className="msg-block" ref={blockRef}>
+      <BubbleMemo m={m} onToggleActions={isAi && !isLast ? toggle : undefined} />
+      {isAi &&
+        (isLast || expanded ? (
+          // 展开/最新消息：完整操作栏（含分支切换器，合并显示）
+          <MessageActions
+            siblings={siblings}
+            index={index}
+            onSwitch={onSwitch}
+            onCopy={onCopy}
+            onRegenerate={onRegenerate}
+            regenerating={regenerating}
+            regenDisabled={regenDisabled}
+          />
+        ) : (
+          // 未展开：有分支的消息常驻显示分支切换器
+          siblings.length > 1 && (
+            <BranchSwitcher
+              siblings={siblings}
+              index={index}
+              onSwitch={onSwitch}
+              disabled={streaming && siblings.some((s) => s.id < 0)}
+            />
+          )
+        ))}
     </div>
   );
 }
@@ -331,7 +426,7 @@ const MessageView = forwardRef<MessageViewHandle, Props>(function MessageView(
     return { idx: index, pathMessages: list };
   }, [messages, activePath]);
 
-  // 最新 AI 消息（活跃路径上最后一条 ASSISTANT）
+  // 最新 AI 消息（活跃路径上最后一条 ASSISTANT）：操作栏始终显示
   const lastAi = useMemo(() => {
     for (let i = pathMessages.length - 1; i >= 0; i--) {
       if (pathMessages[i].role === 'ASSISTANT') return pathMessages[i];
@@ -752,32 +847,21 @@ const MessageView = forwardRef<MessageViewHandle, Props>(function MessageView(
         {pathMessages.slice(-renderCount).map((m) => {
           const { siblings, index } = branchSiblings(idx, m.id);
           const isLastAi = lastAi !== null && m.id === lastAi.id;
-          // 用 .msg-block 包住每个消息（气泡+操作栏）：column-reverse 只反转块之间的顺序，
-          // 块内部保持"气泡在上、操作栏在下"的原始布局
           return (
-            <div className="msg-block" key={m.id}>
-              <BubbleMemo m={m} />
-              {isLastAi ? (
-                <MessageActions
-                  siblings={siblings}
-                  index={index}
-                  onSwitch={(t) => switchTo(m.id, t)}
-                  onCopy={() => lastAi && handleCopy(lastAi.content)}
-                  onRegenerate={() => lastAi && handleRegenerate(lastAi)}
-                  regenerating={regenerating || streaming}
-                  regenDisabled={siblings.length >= 6}
-                />
-              ) : (
-                siblings.length > 1 && (
-                  <BranchSwitcher
-                    siblings={siblings}
-                    index={index}
-                    onSwitch={(t) => switchTo(m.id, t)}
-                    disabled={streaming && siblings.some((s) => s.id < 0)}
-                  />
-                )
-              )}
-            </div>
+            <MessageBlock
+              key={m.id}
+              m={m}
+              siblings={siblings}
+              index={index}
+              isLast={isLastAi}
+              scrollEl={scrollRef.current}
+              streaming={streaming}
+              onSwitch={(t) => switchTo(m.id, t)}
+              onCopy={() => handleCopy(m.content)}
+              onRegenerate={() => handleRegenerate(m)}
+              regenerating={regenerating || streaming}
+              regenDisabled={siblings.length >= 6}
+            />
           );
         })}
       </div>
