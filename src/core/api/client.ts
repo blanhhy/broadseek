@@ -1,12 +1,12 @@
 // DeepSeek Web API 客户端
 // 端点对齐 raw-api-reference.md，信封统一解包
 
-import type { ChatFile, ChatMessage, ChatSession, NormalizedMessage } from './types';
+import type { ChatFile, ChatFragmentType, ChatMessage, ChatSession, NormalizedMessage } from './types';
 import { makePowHeader } from './pow';
 import type { PowChallenge } from './pow';
 import { DsBridge, type DsSseEvent } from './nativeBridge';
 import type { PluginListenerHandle } from '@capacitor/core';
-import { deleteHistoryCache, getHistoryCache, setHistoryCache } from './historyCache';
+import { deleteHistoryCache, getHistoryCache, setHistoryCache, type HistoryCacheEntry } from './historyCache';
 
 // 是否运行在 Capacitor 原生环境（区别于浏览器）
 export function isNativeRuntime(): boolean {
@@ -256,29 +256,34 @@ function dedupeByMessageId(list: ChatMessage[]): ChatMessage[] {
   return out;
 }
 
-export async function fetchHistory(sessionId: string): Promise<HistoryResult> {
-  const cached = await getHistoryCache(sessionId);
+// history_messages 原始响应（供 requestHistoryRaw 返回，避免重复声明）
+interface HistoryRawData {
+  chat_session: ChatSession;
+  chat_messages: ChatMessage[];
+  cache_valid: boolean;
+  cache_control?: string;
+  cache_reset_at?: number;
+}
+
+// 按「本地是否有可用缓存」决定是否携带缓存参数请求 history_messages
+async function requestHistoryRaw(
+  sessionId: string,
+  cached: HistoryCacheEntry | null,
+): Promise<HistoryRawData> {
   const query: Record<string, string | number | undefined> = { chat_session_id: sessionId };
   // 仅当缓存同时持有 version 与 cacheResetAt 才携带缓存参数（对齐官方）
   if (cached && cached.version != null && cached.cacheResetAt != null) {
     query.cache_version = cached.version;
     query.cache_reset_at = cached.cacheResetAt;
   }
+  return request<HistoryRawData>('/chat/history_messages', { query });
+}
 
-  let data: {
-    chat_session: ChatSession;
-    chat_messages: ChatMessage[];
-    cache_valid: boolean;
-    cache_control?: string;
-    cache_reset_at?: number;
-  };
+export async function fetchHistory(sessionId: string): Promise<HistoryResult> {
+  let cached = await getHistoryCache(sessionId);
+  let data: HistoryRawData;
   try {
-    data = await request<
-      typeof data
-    >(
-      '/chat/history_messages',
-      { query },
-    );
+    data = await requestHistoryRaw(sessionId, cached);
   } catch (e) {
     // 会话已删除（INVALID_SESSION_ID）：清理本地缓存，避免复活旧数据
     if (e instanceof ApiError && e.bizCode === 1) void deleteHistoryCache(sessionId);
@@ -289,6 +294,20 @@ export async function fetchHistory(sessionId: string): Promise<HistoryResult> {
   if (!data.chat_session || data.chat_session.version === 0) {
     void deleteHistoryCache(sessionId);
     return { ...data, fromCache: false };
+  }
+
+  // 命中"空缓存"→ 疑似历史污染：之前带 x-client-version 头时期曾把空消息树
+  // 写入本地缓存（响应格式被版本头改变导致解析为空），版本命中后一直复用空缓存。
+  // 删除缓存并强制全量重拉一次（不带缓存参数），用真实消息重建缓存。
+  if (data.cache_valid && cached && cached.data.chat_messages.length === 0 && data.chat_messages.length === 0) {
+    await deleteHistoryCache(sessionId);
+    cached = null;
+    try {
+      data = await requestHistoryRaw(sessionId, null);
+    } catch (e) {
+      if (e instanceof ApiError && e.bizCode === 1) void deleteHistoryCache(sessionId);
+      throw e;
+    }
   }
 
   // 合并：REPLACE 直接用响应；否则(MERGE/缺省)响应 + 本地缓存按 message_id 去重（响应优先）
@@ -688,15 +707,28 @@ async function nativeStreamSse(
 
 // ── 消息规范化（history → 结构化）──
 export function normalizeMessage(m: ChatMessage): NormalizedMessage {
-  const thinkingContent = m.thinking_content;
+  // 官方 Android 格式（fragments）兼容：历史版本曾全局携带 x-client-version 头，
+  // 服务端因此返回 fragments 结构（无 content/thinking_content），并被写入本地缓存。
+  // content/thinking 缺失时从 fragments 拼装，保证此类缓存能正常渲染。
+  const hasContent = (m.content ?? '').length > 0;
+  const fragments = m.fragments ?? [];
+  const joinFrag = (types: ChatFragmentType[]) =>
+    fragments
+      .filter((f) => types.includes(f.type))
+      .map((f) => f.content ?? '')
+      .join('');
+  const content = hasContent ? m.content : joinFrag(['REQUEST', 'RESPONSE']);
+  const thinkingFrag = fragments.find((f) => f.type === 'THINK');
+  const thinkingContent = hasContent ? m.thinking_content : (thinkingFrag?.content ?? '');
+  const elapsedSecs = hasContent ? m.thinking_elapsed_secs : (thinkingFrag?.elapsed_secs ?? null);
   return {
     id: m.message_id,
     parent_id: m.parent_id,
     role: m.role,
-    content: m.content ?? '',
+    content: content ?? '',
     thinking:
       thinkingContent && thinkingContent.length > 0
-        ? { content: thinkingContent, elapsed_secs: m.thinking_elapsed_secs }
+        ? { content: thinkingContent, elapsed_secs: elapsedSecs }
         : null,
     model: m.model ?? '',
     status: m.status ?? 'FINISHED',

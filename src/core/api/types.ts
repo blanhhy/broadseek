@@ -34,6 +34,22 @@ export interface ChatSession {
   version: number; // 会话内容版本号：history_messages 缓存协议(cache_version)的依据
 }
 
+// ── 官方 Android 消息片段（带 x-client-version 头时 history_messages 返回）──
+// 旧客户端曾全局携带版本头，把这种格式写进了本地缓存：
+// 消息没有 content/thinking_content，内容分散在 fragments 里。
+export type ChatFragmentType = 'REQUEST' | 'RESPONSE' | 'THINK' | 'TIP';
+
+export interface ChatFragment {
+  id: number;
+  type: ChatFragmentType;
+  content?: string;
+  elapsed_secs?: number;
+  references?: unknown;
+  stage_id?: string;
+  style?: unknown;
+  hide_on_wip?: boolean;
+}
+
 // ── 单条消息（history_messages 返回）──
 export interface ChatMessage {
   message_id: number;
@@ -56,6 +72,7 @@ export interface ChatMessage {
   search_status: string | null;
   search_results: unknown;
   tips: unknown[];
+  fragments?: ChatFragment[]; // Android 格式：内容分散在片段里（见上）
 }
 
 // ── 完整导出格式（扁平存储，parent_id 还原树）──
