@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { useAuth, useConversation } from '../core/store';
-import { fetchAllSessions, fetchHistory, normalizeMessage } from '../core/api/client';
+import { enrichMessageFiles, fetchAllSessions, fetchHistory, normalizeMessage } from '../core/api/client';
 import { loadSessionListCache, saveSessionListCache } from '../core/api/sessionCache';
 import type { ChatSession } from '../core/api/types';
 import { buildIndex, activePathOf } from '../core/api/tree';
@@ -361,6 +361,7 @@ export default function ChatPage() {
     try {
       const data = await fetchHistory(id);
       if (seq !== reqSeq.current) return; // 已被更新的切换取代
+      // 先渲染消息（富化文件签名不能阻塞列表加载：fetch_files 挂起会导致一直加载中）
       const messages = data.chat_messages.map(normalizeMessage);
       const idx = buildIndex(messages);
       const active = activePathOf(idx, data.chat_session.current_message_id);
@@ -373,6 +374,24 @@ export default function ChatPage() {
       sessionCache.set(id, payload);
       if (seq !== reqSeq.current) return;
       conv.setData(payload);
+
+      // 后台补全文件描述符（signed_path），完成后原地刷新；失败/超时不影响消息展示
+      void enrichMessageFiles(data.chat_messages)
+        .then((enriched) => {
+          if (seq !== reqSeq.current) return;
+          const msgs = enriched.map(normalizeMessage);
+          const idx2 = buildIndex(msgs);
+          const payload2: SessionCache = {
+            session: data.chat_session,
+            messages: msgs,
+            activePath: activePathOf(idx2, data.chat_session.current_message_id),
+            currentMessageId: data.chat_session.current_message_id,
+          };
+          sessionCache.set(id, payload2);
+          if (seq !== reqSeq.current) return;
+          conv.setData(payload2);
+        })
+        .catch(() => { /* 富化失败仅影响图片缩略，忽略 */ });
     } catch (e: any) {
       if (seq !== reqSeq.current) return;
       conv.setError(e.message || '加载失败');

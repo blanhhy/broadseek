@@ -1,7 +1,7 @@
 // DeepSeek Web API 客户端
 // 端点对齐 raw-api-reference.md，信封统一解包
 
-import type { ChatMessage, ChatSession, NormalizedMessage } from './types';
+import type { ChatFile, ChatMessage, ChatSession, NormalizedMessage } from './types';
 import { makePowHeader } from './pow';
 import type { PowChallenge } from './pow';
 import { DsBridge, type DsSseEvent } from './nativeBridge';
@@ -19,6 +19,50 @@ export function isNativeRuntime(): boolean {
 export const BASE = import.meta.env.DEV
   ? '/api/v0'
   : 'https://chat.deepseek.com/api/v0';
+
+// 文件（图片）服务域名：signed_path 本身已含 "/file?file_id=...&state=..."，
+// 只需拼上该域并通过 ty=p 指定图片形态（对齐 web 端 bundle 的 ct()）。
+const FILE_IMAGE_HOST = 'https://files.deepseeksvc.com';
+
+// 由消息文件描述符的 signed_path 拼出可访问的图片 URL。
+// - 已是完整 http(s) URL → 原样返回
+// - 否则 → 拼上域名与 ty=p；注意 signed_path 内已带 URL 编码（%2F/%2B），直接拼接不可二次编码
+// dev 下走 Vite /file-svc 代理（服务端补 Referer 绕过 WAF 的跨域来源校验）；
+// 生产（原生/线上部署）用文件服务绝对地址。
+// 找不到返回 null。
+export function buildFileUrl(signedPath: string | null | undefined): string | null {
+  if (!signedPath) return null;
+  if (/^https?:\/\//.test(signedPath)) return signedPath;
+  const origin = import.meta.env.DEV ? '/file-svc' : FILE_IMAGE_HOST;
+  const base = `${origin}/api${signedPath}`;
+  const sep = base.includes('?') ? '&' : '?';
+  return `${base}${sep}ty=p`;
+}
+
+// 原生环境（Capacitor WebView）加载文件服务图片：WebView 直接 <img> 跨域会被 WAF 拦，
+// 改为走原生 OkHttp（DsBridge.requestBinary）带伪装头拉取，返回 base64 data URL；
+// 非原生环境（浏览器 dev 走代理 / 线上）直接返回 URL 交给 <img>。
+export async function loadFileImage(signedPath: string | null | undefined): Promise<string | null> {
+  const url = buildFileUrl(signedPath);
+  if (!url) return null;
+  if (!isNativeRuntime()) return url;
+  try {
+    const resp = await DsBridge.requestBinary({
+      method: 'GET',
+      url,
+      headers: {
+        Accept: 'image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8',
+        'User-Agent': 'Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36 Chrome/126 Mobile Safari/537.36',
+        Referer: 'https://chat.deepseek.com/',
+        Origin: 'https://chat.deepseek.com',
+      },
+    });
+    if (resp.status !== 200 || !resp.data) return null;
+    return `data:${resp.mimeType || 'image/webp'};base64,${resp.data}`;
+  } catch {
+    return null;
+  }
+}
 
 // ── 信封 ──
 export interface Envelope {
@@ -273,6 +317,54 @@ export async function fetchHistory(sessionId: string): Promise<HistoryResult> {
     cache_valid: data.cache_valid,
     fromCache: data.chat_messages.length === 0 && cached !== null,
   };
+}
+
+// 按 file_id 取回完整文件实体：history_messages 里的文件是裁剪版（缺 signed_path），
+// 图片预览需要完整实体里的 signed_path 来拼可访问 URL。
+// 带 8s 超时：文件富化是后台渐进增强，挂起也不能影响消息展示。
+export async function fetchFilesInfo(fileIds: string[]): Promise<ChatFile[]> {
+  if (!fileIds.length) return [];
+  const timeout = new Promise<{ files?: ChatFile[] }>((resolve) => {
+    window.setTimeout(() => resolve({ files: [] }), 8000);
+  });
+  try {
+    const data = await Promise.race([
+      request<{ files?: ChatFile[] }>('/file/fetch_files', {
+        method: 'GET',
+        query: { file_ids: fileIds.join(',') },
+        // fetch_files 需要新客户端标识才返回带 signed_path 的完整文件实体
+        headers: {
+          'x-client-version': '2.3.0',
+          'x-client-bundle-id': 'com.deepseek.chat',
+        },
+      }),
+      timeout,
+    ]);
+    return data.files ?? [];
+  } catch {
+    return [];
+  }
+}
+
+// 用 /file/fetch_files 把消息里缺失 signed_path 的文件补全为完整实体（带 signed_path/is_image 等）。
+// 加载某会话的历史消息后调用；返回新的 chat_messages（未缺文件的直接原样返回）。
+export async function enrichMessageFiles(messages: ChatMessage[]): Promise<ChatMessage[]> {
+  const ids = new Set<string>();
+  for (const m of messages) {
+    for (const f of m.files ?? []) {
+      if (!(f as any).signed_path && !(f as any).url && (f as any).id) ids.add(String((f as any).id));
+    }
+  }
+  if (!ids.size) return messages;
+  const infos = await fetchFilesInfo([...ids]);
+  const byId = new Map(infos.map((i) => [String(i.id), i]));
+  return messages.map((m) => ({
+    ...m,
+    files: (m.files ?? []).map((f) => {
+      const full = byId.get(String((f as any).id));
+      return full && !(f as any).signed_path ? { ...f, ...full } : f;
+    }),
+  }));
 }
 
 // 删除会话

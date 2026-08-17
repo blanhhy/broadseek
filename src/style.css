@@ -742,6 +742,34 @@ textarea { font: inherit; resize: none; }
 .msg-action-btn:hover:not(:disabled) { color: var(--text); }
 .msg-action-btn:disabled { opacity: 0.4; cursor: default; }
 
+/* ── 消息内图片缩略：内联网格，缩略图圆角、等比，多图并排换行 ── */
+.file-images {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 8px 0 2px;
+}
+.file-image-thumb {
+  max-width: 200px;
+  max-height: 200px;
+  height: auto;
+  width: auto;
+  border-radius: 12px;
+  display: block;
+  background: var(--bg-elev2); /* 加载中底色 */
+}
+/* 缩略图加载中占位 */
+.file-thumb-ph {
+  width: 96px;
+  height: 96px;
+  border-radius: 12px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-faint);
+  background: var(--bg-elev2);
+}
+
 /* ── Markdown 渲染 ── */
 .markdown { font-size: 15px; line-height: 1.6; word-break: break-word; }
 .markdown > *:first-child { margin-top: 0; }

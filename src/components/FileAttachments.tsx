@@ -1,7 +1,13 @@
-// 文件附件展示：文档 / 图片 占位物
-// 文件字段结构不稳定，做防御性解析；无内容 URL 时显示占位物
+// 文件附件展示：图片内联缩略 + 文档占位
+// 对齐 DeepSeek 真实文件结构（is_image + signed_path）。
+// 图片 src 用 loadFileImage 解析：浏览器直接给 URL（dev 走 /file-svc 代理）；
+// 原生 WebView 走 OkHttp 伪装头拉取转 data URL，绕过 WAF 跨域拦截。
 
-function fmtSize(n: unknown): string {
+import { useEffect, useState } from 'react';
+import type { ChatFile } from '../core/api/types';
+import { loadFileImage } from '../core/api/client';
+
+function fmtSize(n: number | null | undefined): string {
   const v = Number(n);
   if (!Number.isFinite(v) || v <= 0) return '';
   if (v < 1024) return `${v} B`;
@@ -9,33 +15,58 @@ function fmtSize(n: unknown): string {
   return `${(v / 1024 / 1024).toFixed(1)} MB`;
 }
 
-function FileCard({ f }: { f: any }) {
-  const name: string = f?.file_name || f?.name || '文件';
-  const size = fmtSize(f?.file_size ?? f?.size);
-  const isImage = !!(f?.is_image || f?.model_kind === 'VISION' || /^image\//.test(f?.content_type ?? ''));
-  const url: string | undefined = f?.url || f?.file_url || f?.preview_url;
+const IMG_EXT = /\.(png|jpe?g|gif|webp|avif|bmp|svg)$/i;
+function isImgFile(f: ChatFile): boolean {
+  return (
+    !!f.is_image ||
+    /^image\//.test(f.content_type || '') ||
+    IMG_EXT.test(f.file_name || '')
+  );
+}
 
-  // 图片：有 url 渲染缩略图，否则占位
-  if (isImage) {
+// 单张缩略图：异步解析 src（原生环境需经 OkHttp 拉取），未就绪时显示占位
+function Thumb({ file }: { file: ChatFile }) {
+  const [src, setSrc] = useState<string | null>(null);
+  useEffect(() => {
+    let alive = true;
+    const rawUrl = file.signed_path ?? file.url ?? file.file_url;
+    if (!rawUrl) { setSrc(null); return; }
+    loadFileImage(file.signed_path ?? rawUrl).then((s) => {
+      if (alive) setSrc(s);
+    });
+    return () => { alive = false; };
+  }, [file]);
+  if (!src) {
     return (
-      <div className="file-card file-image">
-        {url ? (
-          <img src={url} alt={name} loading="lazy" className="file-thumb" />
-        ) : (
-          <div className="file-thumb file-thumb-ph">
-            <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6">
-              <rect x="3" y="3" width="18" height="18" rx="3" />
-              <circle cx="8.5" cy="8.5" r="1.6" />
-              <path d="M21 15l-5-5-9 9" />
-            </svg>
-          </div>
-        )}
-        <span className="file-name">{name}</span>
+      <div className="file-thumb-ph">
+        <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6">
+          <rect x="3" y="3" width="18" height="18" rx="3" />
+          <circle cx="8.5" cy="8.5" r="1.6" />
+          <path d="M21 15l-5-5-9 9" />
+        </svg>
       </div>
     );
   }
+  return <img src={src} alt={file.file_name ?? '图片'} className="file-image-thumb" />;
+}
 
-  // 文档占位
+// 图片：内联网格缩略图（多图并排换行）
+function FileImages({ files }: { files: ChatFile[] }) {
+  const imgs = files.filter(isImgFile);
+  if (imgs.length === 0) return null;
+  return (
+    <div className="file-images">
+      {imgs.map((f, i) => (
+        <Thumb key={(f as any).id ?? i} file={f} />
+      ))}
+    </div>
+  );
+}
+
+// 文档占位
+function FileCard({ f }: { f: ChatFile }) {
+  const name: string = f?.file_name || '文件';
+  const size = fmtSize(f?.file_size);
   return (
     <div className="file-card file-doc">
       <span className="file-icon">
@@ -52,13 +83,20 @@ function FileCard({ f }: { f: any }) {
   );
 }
 
-export default function FileAttachments({ files }: { files: unknown[] }) {
+export default function FileAttachments({ files }: { files: ChatFile[] }) {
   if (!files || files.length === 0) return null;
+  const images = files.filter((f) => f.is_image);
+  const docs = files.filter((f) => !f.is_image);
   return (
-    <div className="file-attachments">
-      {files.map((f, i) => (
-        <FileCard key={(f as any)?.id ?? i} f={f} />
-      ))}
-    </div>
+    <>
+      {images.length > 0 && <FileImages files={images} />}
+      {docs.length > 0 && (
+        <div className="file-attachments">
+          {docs.map((f, i) => (
+            <FileCard key={(f as any)?.id ?? i} f={f} />
+          ))}
+        </div>
+      )}
+    </>
   );
 }

@@ -1,5 +1,26 @@
 // DeepSeek API 数据类型（对齐 history_messages / fetch_page 真实返回）
 
+// ── 消息文件（history_messages 真实返回：文件描述符）──
+// 图片文件额外带 is_image/width/height；signed_path 需经 buildFileUrl 拼成可访问 URL
+export interface ChatFile {
+  id: string | number;
+  signed_path: string | null;
+  file_name: string | null;
+  status?: string; // PARSING | SUCCESS | FAILED | ...
+  file_size?: number | null;
+  audit_result?: 'pass' | 'reject' | 'unknown' | null;
+  from_share?: boolean;
+  token_usage?: number | null;
+  is_image?: boolean;
+  width?: number;
+  height?: number;
+  content_type?: string;
+  model_kind?: string;
+  // 兜底字段（部分来源可能直接给 URL 或用驼峰命名）
+  url?: string | null;
+  file_url?: string | null;
+}
+
 // ── 会话 ──
 export interface ChatSession {
   id: string;
@@ -26,7 +47,7 @@ export interface ChatMessage {
   status: string; // WIP | FINISHED | INCOMPLETE
   incomplete_message: unknown;
   accumulated_token_usage: number | null;
-  files: unknown[];
+  files: ChatFile[];
   feedback: unknown;
   inserted_at: number;
   content: string; // 正文，纯字符串
@@ -51,7 +72,7 @@ export interface NormalizedMessage {
   search_enabled: boolean;
   ban_edit: boolean;
   ban_regenerate: boolean;
-  files: unknown[];
+  files: ChatFile[];
   feedback: unknown;
   search_results: unknown;
   tips: unknown[];

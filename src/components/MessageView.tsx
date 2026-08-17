@@ -5,7 +5,7 @@ import { forwardRef, memo, useCallback, useEffect, useImperativeHandle, useLayou
 import { createPortal } from 'react-dom';
 import type { NormalizedMessage } from '../core/api/types';
 import { buildIndex, branchSiblings, switchBranchPath, activePathOf } from '../core/api/tree';
-import { regenerateMessage, fetchHistory, normalizeMessage } from '../core/api/client';
+import { regenerateMessage, fetchHistory, normalizeMessage, enrichMessageFiles } from '../core/api/client';
 import { DeltaParser, nextTempId } from '../core/api/delta';
 import { useConversation } from '../core/store';
 import Markdown from './Markdown';
@@ -438,15 +438,21 @@ const MessageView = forwardRef<MessageViewHandle, Props>(function MessageView(
   const refreshFromServer = useCallback(async () => {
     if (!sessionId) return;
     const data = await fetchHistory(sessionId);
-    const msgs = data.chat_messages.map(normalizeMessage);
-    const newIdx = buildIndex(msgs);
-    const active = activePathOf(newIdx, data.chat_session.current_message_id);
-    setData({
-      session: data.chat_session,
-      messages: msgs,
-      activePath: active,
-      currentMessageId: data.chat_session.current_message_id,
-    });
+    const apply = (msgs: NormalizedMessage[]) => {
+      const newIdx = buildIndex(msgs);
+      const active = activePathOf(newIdx, data.chat_session.current_message_id);
+      setData({
+        session: data.chat_session,
+        messages: msgs,
+        activePath: active,
+        currentMessageId: data.chat_session.current_message_id,
+      });
+    };
+    // 先渲染，再后台富化文件签名（不阻塞刷新）
+    apply(data.chat_messages.map(normalizeMessage));
+    void enrichMessageFiles(data.chat_messages)
+      .then((enriched) => apply(enriched.map(normalizeMessage)))
+      .catch(() => {});
   }, [sessionId, setData]);
 
   // 重新生成：调 /chat/regenerate 在父提问下创建新 AI 分支。

@@ -112,6 +112,45 @@ class DsBridgePlugin : Plugin() {
     }
 
     /**
+     * 二进制请求（图片等）。返回 { status, data: base64, mimeType, headers }。
+     * 用于走 OkHttp 带伪装头（Referer/UA）加载文件服务图片，绕过 WebView 跨域/WAF 拦截。
+     */
+    @PluginMethod
+    fun requestBinary(call: PluginCall) {
+        val url = call.getString("url") ?: return call.reject("missing url")
+        val method = call.getString("method") ?: "GET"
+        val body = call.getString("body")
+        val headers = headersToMap(call)
+
+        val req = buildRequest(method, url, headers, body)
+        client.newCall(req).enqueue(object : Callback {
+            override fun onFailure(httpCall: Call, exc: java.io.IOException) {
+                call.reject("network error: ${exc.message}", "NETWORK", exc)
+            }
+
+            override fun onResponse(httpCall: Call, response: Response) {
+                try {
+                    val bytes = response.body?.bytes()
+                    val result = JSObject()
+                    result.put("status", response.code)
+                    if (bytes != null) {
+                        result.put("data", android.util.Base64.encodeToString(bytes, android.util.Base64.NO_WRAP))
+                    }
+                    result.put("mimeType", response.header("content-type") ?: "application/octet-stream")
+                    val h = JSObject()
+                    response.headers.forEach { (k, v) -> h.put(k, v) }
+                    result.put("headers", h)
+                    call.resolve(result)
+                } catch (e: Exception) {
+                    call.reject("binary error: ${e.message}", "PARSE", e)
+                } finally {
+                    response.close()
+                }
+            }
+        })
+    }
+
+    /**
      * SSE 流式请求。逐行解析 "data: {...}"，每条通过 notifyListeners("sseEvent", ...) 回传。
      * 流结束或出错时回传 { type: "end" } / { type: "error", message }。
      */

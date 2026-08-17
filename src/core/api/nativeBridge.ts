@@ -30,6 +30,12 @@ export interface DsSseEvent {
 
 export interface DsBridgePlugin extends Plugin {
   request(options: DsRequestOptions): Promise<DsResponse>;
+  requestBinary(options: DsRequestOptions): Promise<{
+    status: number;
+    data: string; // base64
+    mimeType: string;
+    headers: Record<string, string>;
+  }>;
   startSse(options: DsRequestOptions & { key: string }): Promise<void>;
   stopSse(options: { key: string }): Promise<void>;
   addListener(
