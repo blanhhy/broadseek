@@ -63,16 +63,22 @@ export default function ChatPage() {
   }, [leftOpen, rightOpen]);
 
   // 抽屉滑动手势（移动端，拖拽跟随 + 松手按进度阈值吸附）：
-  //  - 两栏都关闭：左边缘右滑 → 拖出左栏；右边缘左滑 → 拖出右栏
-  //  - 左栏打开：左栏内右滑 → 拖出关闭（松手过半才关）
-  //  - 右栏打开：右栏内左滑 → 拖出关闭
-  //  - 任一抽屉打开时禁用另一侧边缘滑入（左栏/主页/右栏只能邻接，不允许交叉打开）
-  //  - 仅横向主导才拦截触摸，不干扰列表纵向滚动/下拉刷新；左栏菜单打开时暂停关闭手势
+  //  - 开/收手势都在整个对话页检测（官方：横向滑动代码块等横向可滚动区域除外）
+  //  - 两栏都关闭：整页右滑 → 拖出左栏；整页左滑 → 拖出右栏
+  //  - 左栏打开：整页左滑 → 收起左栏；右栏打开：整页右滑 → 收起右栏
+  //  - 极速滑动时直接完成整个动作；左栏菜单打开时暂停关闭手势
+  //  - 仅横向主导才拦截触摸，不干扰列表纵向滚动/下拉刷新
   useEffect(() => {
-    const EDGE = 24; // 边缘识别宽度 px
     const DEAD = 6; // 横向死区 px（避免纵向滚动时的抖动位移）
     const THRESH = 0.5; // 松手进度阈值：过半则吸附到另一侧
+    const FLICK = 0.9; // 极速滑动阈值 px/ms：整段拖动的平均手指速度超此值则直接完成
+    // 极速判定用：横向拖动起点的手指位置与时刻。
+    // 用「整段拖动的平均速度」而不是「最后一次 move 到 touchend」的瞬时速度，
+    // 因为松手瞬间手指往往已几乎不动，瞬时速度≈0，无法反映这是一次快速甩动。
+    let dragOriginX = 0;
+    let dragOriginAt = 0;
     let drawer: 'left' | 'right' | null = null;
+    let opening = false; // 「整页开抽屉」手势：目标抽屉未定，由滑动方向在 onMove 首段决定
     let startX = 0;
     let startY = 0;
     let width = 336;
@@ -87,6 +93,17 @@ export default function ChatPage() {
     const leftEl = () => document.querySelector<HTMLElement>('.drawer-left');
     const rightEl = () => document.querySelector<HTMLElement>('.drawer-right');
 
+    // 命中横向可滚动的元素（如代码块）时不接管为抽屉手势；
+    // 官方行为：横向滑动代码块滚动其内容，而不是触发开/关抽屉
+    const isHorizOverflowTarget = (el: EventTarget | null): boolean => {
+      for (let n = el as Element | null; n && n !== document.body; n = n.parentElement) {
+        const cs = getComputedStyle(n);
+        const ox = cs.overflowX;
+        if ((ox === 'auto' || ox === 'scroll') && n.scrollWidth > n.clientWidth + 1) return true;
+      }
+      return false;
+    };
+
     // 清理拖拽变量，交还 CSS class 控制 transform（--drawer-x 缺省 = class 默认位置）
     const clearDrag = (el: HTMLElement | null) => {
       if (el) {
@@ -96,30 +113,46 @@ export default function ChatPage() {
     };
 
     const onStart = (e: TouchEvent) => {
+      // 起点落在横向可滚动区域（如代码块）时不接管为抽屉手势，交由该区域自身横向滚动
+      if (isHorizOverflowTarget(e.target)) { drawer = null; opening = false; return; }
       const t = e.touches[0];
       const x = t.clientX;
-      const W = window.innerWidth;
       const bothClosed = !leftOpenRef.current && !rightOpenRef.current;
       const menuOpen = !!document.querySelector('.conv-context-menu');
-      let kind: 'openLeft' | 'openRight' | 'closeLeft' | 'closeRight' | null = null;
-      if (leftOpenRef.current && x < 336 && !menuOpen) kind = 'closeLeft';
-      else if (rightOpenRef.current && x > W - 336) kind = 'closeRight';
-      else if (bothClosed && x < EDGE) kind = 'openLeft';
-      else if (bothClosed && x > W - EDGE) kind = 'openRight';
-      if (!kind) { drawer = null; return; }
+      let kind: 'closeLeft' | 'closeRight' | 'openWhole' | null = null;
+      // 收起手势同样整页检测（不再限定抽屉内）
+      if (leftOpenRef.current && !menuOpen) kind = 'closeLeft';
+      else if (rightOpenRef.current) kind = 'closeRight';
+      // 打开抽屉：检测区域扩展到整个对话页，目标抽屉由滑动方向决定（向右滑开左栏、向左滑开右栏）
+      else if (bothClosed) kind = 'openWhole';
+      if (!kind) { drawer = null; opening = false; return; }
 
-      const isLeft = kind === 'openLeft' || kind === 'closeLeft';
+      startX = x;
+      startY = t.clientY;
+      axis = null;
+      dragOriginAt = 0;
+      dragOriginX = 0;
+
+      if (kind === 'openWhole') {
+        // 整页手势：目标抽屉未定，等 onMove 横向主导时再落定
+        opening = true;
+        drawer = null;
+        fromOpen = false;
+        width = 0;
+        v = 0;
+        return;
+      }
+
+      const isLeft = kind === 'closeLeft';
       const target = isLeft ? leftEl() : rightEl();
+      opening = false;
       width = target ? target.offsetWidth : 336;
       drawer = isLeft ? 'left' : 'right';
       fromOpen = isLeft ? leftOpenRef.current : rightOpenRef.current;
-      startX = x;
-      startY = t.clientY;
       v = fromOpen ? 0 : (isLeft ? -width : width);
-      axis = null;
     };
     const onMove = (e: TouchEvent) => {
-      if (!drawer) return;
+      if (!drawer && !opening) return;
       const t = e.touches[0];
       const dx = t.clientX - startX;
       const dy = t.clientY - startY;
@@ -129,6 +162,21 @@ export default function ChatPage() {
         axis = Math.abs(dx) > Math.abs(dy) ? 'x' : 'y';
       }
       if (axis === 'y') return; // 纵向滚动手势：放行列表滚动，全程不接管抽屉
+      // 横向主导：记录整段拖动的起点（时刻+手指位置），用于松手时的平均速度判定
+      if (dragOriginAt === 0) {
+        dragOriginAt = performance.now();
+        dragOriginX = t.clientX;
+      }
+      // 整页开抽屉：横向主导的首段落定目标抽屉——向右滑开左栏，向左滑开右栏
+      if (opening) {
+        const isLeft = dx > 0;
+        const target = isLeft ? leftEl() : rightEl();
+        opening = false;
+        drawer = isLeft ? 'left' : 'right';
+        fromOpen = false;
+        width = target ? target.offsetWidth : 336;
+        v = isLeft ? -width : width; // 起始=关闭态
+      }
       // 抽屉手势（axis === 'x'）：锁定列表滚动/下拉刷新，抽屉始终跟随 x 位移
       e.preventDefault();
       const isLeft = drawer === 'left';
@@ -171,11 +219,8 @@ export default function ChatPage() {
             }
           }
         }
-        if (Math.abs(v - startV0()) < 1) {
-          // 无实际拖拽（点击/死区内滑动）：直接清变量，交还 class 控制
-          clearDrag(el);
-        } else {
-          const targetOpen = isLeft ? v > -width * (1 - THRESH) : v < width * (1 - THRESH);
+        // 吸附到一个最终状态并结束手势（更新状态 + 抑制 click 穿透 + 平滑过渡）
+        const complete = (targetOpen: boolean) => {
           const targetV = targetOpen ? 0 : (isLeft ? -width : width);
           if (isLeft) {
             setLeftOpen(targetOpen);
@@ -184,9 +229,6 @@ export default function ChatPage() {
             setRightOpen(targetOpen);
             if (targetOpen) setLeftOpen(false);
           }
-          // 抑制手势结束后浏览器派发的 click 穿透：
-          // touchend 后浏览器会补发 click，若拖拽未超过阈值回弹打开，该 click 会命中抽屉内元素
-          // （左栏会话项/右栏分支项）触发 openSession/跳转，造成「闪回完全关闭」的假象。
           suppressClick = true;
           window.setTimeout(() => { suppressClick = false; }, 350);
           // 吸附动画：先恢复 class 的 0.28s 过渡，下一帧（transition 已生效）再写入目标值。
@@ -196,6 +238,26 @@ export default function ChatPage() {
           requestAnimationFrame(() => {
             el.style.setProperty('--drawer-x', `${targetV}px`);
           });
+        };
+        // 极速滑动：整段拖动的手指平均速度超阈值则直接完成整个动作（优先于位移阈值判断）
+        let flickOpen = false, flickClose = false;
+        if (dragOriginAt > 0 && ct) {
+          const dt = performance.now() - dragOriginAt;
+          if (dt > 0) {
+            const velX = (ct.clientX - dragOriginX) / dt; // 手指 x 平均速度 px/ms，正=向右
+            // 左栏：打开=右甩(velX>0)、关闭=左甩(velX<0)；右栏相反
+            flickOpen = isLeft ? velX > FLICK : velX < -FLICK;
+            flickClose = isLeft ? velX < -FLICK : velX > FLICK;
+          }
+        }
+        if (flickOpen || flickClose) {
+          complete(flickOpen);
+        } else if (Math.abs(v - startV0()) < 1) {
+          // 无实际拖拽（点击/死区内滑动）：直接清变量，交还 class 控制
+          clearDrag(el);
+        } else {
+          const targetOpen = isLeft ? v > -width * (1 - THRESH) : v < width * (1 - THRESH);
+          complete(targetOpen);
         }
       }
       axis = null;
