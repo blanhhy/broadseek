@@ -11,6 +11,7 @@ interface Props {
   onOpen: (id: string) => void;
   onSessionsChange: () => void;
   onRefresh: () => void | Promise<void>; // 下拉刷新：立即重新拉取会话列表
+  open: boolean; // 左栏是否展开
 }
 
 // 按时间分组标签
@@ -37,7 +38,7 @@ function fmtTime(ts: number): string {
   return `${d.getMonth() + 1}/${d.getDate()}`;
 }
 
-export default function ConversationList({ sessions, currentId, onOpen, onSessionsChange, onRefresh }: Props) {
+export default function ConversationList({ sessions, currentId, onOpen, onSessionsChange, onRefresh, open }: Props) {
   const [keyword, setKeyword] = useState('');
   const [busyId, setBusyId] = useState<string | null>(null);
   // 下拉刷新：pull.dist 为拖拽距离（px），refreshing 为请求中
@@ -106,6 +107,12 @@ export default function ConversationList({ sessions, currentId, onOpen, onSessio
     document.addEventListener('mousedown', handler);
     return () => document.removeEventListener('mousedown', handler);
   }, [menu]);
+
+  // 左栏关闭时同步收起长按菜单：openSession 异步，抽屉可能在菜单弹出后才关闭，
+  // 若不在这里清理，菜单会残留在已关闭的对话页上
+  useEffect(() => {
+    if (!open) setMenu(null);
+  }, [open]);
 
   // 菜单打开期间锁定列表滚动：否则列表滚动会让菜单停留在原地（移动端滚动必点击，天然规避）
   useEffect(() => {
@@ -335,6 +342,9 @@ export default function ConversationList({ sessions, currentId, onOpen, onSessio
     e.stopPropagation();
     const el = e.currentTarget as HTMLElement;
     const drawer = el.closest('.drawer-left') as HTMLElement | null;
+    // 抽屉已处于关闭/关闭中（例如左键点开会话的一瞬间右键）时不弹菜单，
+    // 否则菜单 portal 到 body 会残留在已关闭的对话页上
+    if (drawer && !drawer.classList.contains('open')) return;
     const iRect = el.getBoundingClientRect();
     if (drawer) {
       const dRect = drawer.getBoundingClientRect();
@@ -404,7 +414,7 @@ export default function ConversationList({ sessions, currentId, onOpen, onSessio
               <div
                 key={s.id}
                 className={`conv-item ${s.id === currentId ? 'active' : ''}${menu && menu.id === s.id ? ' menu-anchor' : ''}`}
-                onClick={() => { if (editingId !== s.id) onOpen(s.id); }}
+                onClick={() => { if (editingId === s.id) return; setMenu(null); onOpen(s.id); }}
                 onContextMenu={(e) => openMenu(e, s)}
                 // 触屏：移动端 :hover 在长按后会残留，故触摸时手动挂 .t-hover，
                 // 松手/取消即清除（CSS 触屏分支只认 .t-hover；menu-anchor 负责菜单展开期的高亮）

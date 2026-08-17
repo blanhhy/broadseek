@@ -359,6 +359,7 @@ export default function ChatPage() {
           onOpen={openSession}
           onSessionsChange={() => loadSessions(false)}
           onRefresh={() => loadSessions(false)}
+          open={leftOpen}
         />
       </div>
 
