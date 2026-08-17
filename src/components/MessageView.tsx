@@ -342,6 +342,7 @@ function MessageBlock({
   }, [expanded, scrollEl]);
 
   const isAi = m.role === 'ASSISTANT';
+
   return (
     <div className="msg-block" ref={blockRef}>
       <BubbleMemo m={m} onToggleActions={isAi && !isLast ? toggle : undefined} />
@@ -817,7 +818,9 @@ const MessageView = forwardRef<MessageViewHandle, Props>(function MessageView(
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // 回到底部按钮右边界对齐 AI 消息右边界：right = 内容 padding(24px) + 滚动条宽度。
+  // 回到底部按钮右边界对齐 AI 消息右边界：right = 内容 padding(22px) + 滚动条宽度。
+  // 22 = msg-block 左右 padding(16px) + msg-row.ai 左右 padding(6px)；
+  // 左右 padding 在 msg-block 上（不在 .msg-scroll），故不含 scroll padding。
   // 依赖 atBottom：按钮仅在 !atBottom 时渲染，需在按钮出现后再计算。
   useEffect(() => {
     const scroll = scrollRef.current;
@@ -825,7 +828,7 @@ const MessageView = forwardRef<MessageViewHandle, Props>(function MessageView(
     const update = () => {
       if (!scroll || !btn) return;
       const barW = scroll.offsetWidth - scroll.clientWidth;
-      btn.style.right = `${24 + barW}px`;
+      btn.style.right = `${22 + barW}px`;
     };
     update();
     window.addEventListener('resize', update);
