@@ -368,6 +368,15 @@ function MessageBlock({
             />
           )
         ))}
+      {/* 用户消息：有同父兄弟（多分支）时也常驻显示分支切换器 */}
+      {!isAi && siblings.length > 1 && (
+        <BranchSwitcher
+          siblings={siblings}
+          index={index}
+          onSwitch={onSwitch}
+          disabled={streaming && siblings.some((s) => s.id < 0)}
+        />
+      )}
     </div>
   );
 }
