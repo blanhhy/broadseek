@@ -618,8 +618,10 @@ textarea { font: inherit; resize: none; }
   animation: scrim-fade 0.2s ease;
 }
 .msg-wrap.editing .msg-scroll { overflow: hidden; }
-/* 被编辑的消息气泡浮于蒙版之上（仅气泡，不含下方操作行） */
-.msg-row.editing { position: relative; z-index: 11; }
+/* 编辑态：仅被编辑的用户气泡浮于蒙版之上。
+   不能提升整个 msg-row（用户消息 msg-row 是全宽行，含气泡左侧空白区域），
+   否则整行都"露出"蒙版；提升只落在气泡自身 */
+.msg-row.editing .msg-bubble { position: relative; z-index: 11; }
 
 /* 每个消息一个块（气泡 + 操作栏/切换器）：column-reverse 只反转块间顺序，
    块内保持"气泡在上、操作栏在下"的原始布局，间距与消息间一致（操作栏负 margin 抵消） */
