@@ -71,6 +71,7 @@ export default function ConversationList({ sessions, currentId, onOpen, onSessio
     itemTop: number;
     itemBottom: number;
     drawerHeight: number;
+    drawerRight: number; // 侧栏右边缘的视口 x 坐标（portal 到 body 后用于 fixed 定位）
   } | null>(null);
   const [menuTop, setMenuTop] = useState(0);
   const menuRef = useRef<HTMLDivElement>(null);
@@ -339,10 +340,11 @@ export default function ConversationList({ sessions, currentId, onOpen, onSessio
         itemTop: iRect.top - dRect.top,
         itemBottom: iRect.bottom - dRect.top,
         drawerHeight: dRect.height,
+        drawerRight: dRect.right,
       });
     } else {
       // 兜底：找不到侧栏时按常规绝对定位
-      setMenu({ id: s.id, itemTop: iRect.top, itemBottom: iRect.bottom, drawerHeight: 600 });
+      setMenu({ id: s.id, itemTop: iRect.top, itemBottom: iRect.bottom, drawerHeight: 600, drawerRight: iRect.right });
     }
   };
 
@@ -391,6 +393,11 @@ export default function ConversationList({ sessions, currentId, onOpen, onSessio
                 className={`conv-item ${s.id === currentId ? 'active' : ''}${menu && menu.id === s.id ? ' menu-anchor' : ''}`}
                 onClick={() => { if (editingId !== s.id) onOpen(s.id); }}
                 onContextMenu={(e) => openMenu(e, s)}
+                // 触屏：移动端 :hover 在长按后会残留，故触摸时手动挂 .t-hover，
+                // 松手/取消即清除（CSS 触屏分支只认 .t-hover；menu-anchor 负责菜单展开期的高亮）
+                onTouchStart={(e) => { if (editingId !== s.id) e.currentTarget.classList.add('t-hover'); }}
+                onTouchEnd={(e) => e.currentTarget.classList.remove('t-hover')}
+                onTouchCancel={(e) => e.currentTarget.classList.remove('t-hover')}
               >
                 <div className="conv-item-title">
                   {editingId === s.id ? (
@@ -431,13 +438,22 @@ export default function ConversationList({ sessions, currentId, onOpen, onSessio
       {menu && (() => {
         const s = sessions.find((x) => x.id === menu.id);
         if (!s) return null;
-        return (
+        // portal 到 body：与全屏遮罩处于同一 stacking context，
+        // fixed + right 保持菜单贴合侧栏右缘（z-index 100 > 遮罩 90，可点击）
+        const menuRight = window.innerWidth - menu.drawerRight + 8;
+        return createPortal(
           <div
             ref={menuRef}
             className="conv-context-menu"
-            style={{ top: menuTop }}
+            style={{ top: menuTop, right: menuRight }}
           >
-            <button className="conv-menu-item" onClick={() => handleRename(s)}>
+            <button
+              className="conv-menu-item"
+              onTouchStart={(e) => e.currentTarget.classList.add('t-hover')}
+              onTouchEnd={(e) => e.currentTarget.classList.remove('t-hover')}
+              onTouchCancel={(e) => e.currentTarget.classList.remove('t-hover')}
+              onClick={() => handleRename(s)}
+            >
               <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                 <path d="M17 3a2.83 2.83 0 114 4L7.5 20.5 2 22l1.5-5.5L17 3z" />
               </svg>
@@ -446,6 +462,9 @@ export default function ConversationList({ sessions, currentId, onOpen, onSessio
             <button
               className="conv-menu-item"
               disabled={busyId === s.id}
+              onTouchStart={(e) => e.currentTarget.classList.add('t-hover')}
+              onTouchEnd={(e) => e.currentTarget.classList.remove('t-hover')}
+              onTouchCancel={(e) => e.currentTarget.classList.remove('t-hover')}
               onClick={() => handleFork(s)}
             >
               <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -454,13 +473,20 @@ export default function ConversationList({ sessions, currentId, onOpen, onSessio
               <span>{busyId === s.id ? '复制中…' : '复制'}</span>
             </button>
             <div className="conv-menu-divider" />
-            <button className="conv-menu-item conv-menu-item-danger" onClick={() => requestDelete(s)}>
+            <button
+              className="conv-menu-item conv-menu-item-danger"
+              onTouchStart={(e) => e.currentTarget.classList.add('t-hover')}
+              onTouchEnd={(e) => e.currentTarget.classList.remove('t-hover')}
+              onTouchCancel={(e) => e.currentTarget.classList.remove('t-hover')}
+              onClick={() => requestDelete(s)}
+            >
               <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                 <polyline points="3 6 5 6 21 6" /><path d="M19 6l-1 14a2 2 0 01-2 2H8a2 2 0 01-2-2L5 6" /><path d="M10 11v6" /><path d="M14 11v6" /><path d="M9 6V4a1 1 0 011-1h4a1 1 0 011 1v2" />
               </svg>
               <span>删除</span>
             </button>
-          </div>
+          </div>,
+          document.body,
         );
       })()}
       {toast &&

@@ -319,7 +319,16 @@ textarea { font: inherit; resize: none; }
   margin-top: 2px;
   margin-right: 12px;
 }
-.conv-item:hover { background: var(--bg-hover); }
+/* 列表项 hover 反馈：
+   桌面（hover:hover & pointer:fine）用浏览器 :hover；
+   触屏设备 :hover 会在长按后残留（移开仍高亮），改为触摸事件手动挂 .t-hover，松手即清除 */
+@media (hover: hover) and (pointer: fine) {
+  .conv-item:hover { background: var(--bg-hover); }
+}
+@media (hover: none), (pointer: coarse) {
+  .conv-item:hover { background: none; }
+  .conv-item.t-hover { background: var(--bg-hover); }
+}
 /* 菜单展开期间：被长按的项目保持 hover 前景色（当前选中项除外，已有 active 样式）；
    菜单收起时 menu-anchor 移除，恢复默认 */
 .conv-item.menu-anchor:not(.active) { background: var(--bg-hover); }
@@ -371,8 +380,8 @@ textarea { font: inherit; resize: none; }
 .fork-btn:disabled { opacity: 0.5; }
 
 /* ── 会话右键菜单 ──
-   相对 .drawer（最近的定位祖先）定位：right 固定在侧栏靠右，不遮住左侧长按项目；
-   top 由组件内计算：优先项目上方，空间不足则下方。 */
+   portal 到 body，fixed 定位（top/right 由组件按侧栏位置计算）：
+   与全屏遮罩同处 root stacking context，z-index 高于遮罩，菜单可点击 */
 /* 菜单展开期间的全屏交互遮罩：fixed 覆盖整个屏幕（与删除确认遮罩同层级方案），
    拦截外部点击，点击任意位置收起菜单；背景透明，视觉无变化 */
 .conv-menu-mask {
@@ -382,8 +391,7 @@ textarea { font: inherit; resize: none; }
   background: transparent;
 }
 .conv-context-menu {
-  position: absolute;
-  right: 8px;
+  position: fixed;
   z-index: 100;
   background: var(--bg-elev);
   border: 1px solid var(--border);
@@ -404,7 +412,14 @@ textarea { font: inherit; resize: none; }
   text-align: left;
   cursor: pointer;
 }
-.conv-menu-item:hover { background: var(--bg-hover); }
+/* 触屏：:hover 长按后残留，改用触摸事件的 .t-hover 实现按压反馈 */
+@media (hover: hover) and (pointer: fine) {
+  .conv-menu-item:hover { background: var(--bg-hover); }
+}
+@media (hover: none), (pointer: coarse) {
+  .conv-menu-item:hover { background: none; }
+  .conv-menu-item.t-hover { background: var(--bg-hover); }
+}
 .conv-menu-item:disabled { opacity: 0.5; cursor: default; }
 .conv-menu-item-danger { color: var(--danger); }
 .conv-menu-divider {
@@ -722,7 +737,8 @@ textarea { font: inherit; resize: none; }
   color: var(--text-faint);
   padding: 2px 4px;
 }
-.msg-action-btn:hover:not(:disabled) { color: var(--text); background: var(--bg-hover); }
+/* 操作/切换图标 hover 只改变图标颜色，不画背景（与上一处的 .switcher-btn 一致） */
+.msg-action-btn:hover:not(:disabled) { color: var(--text); }
 .msg-action-btn:disabled { opacity: 0.4; cursor: default; }
 
 /* ── Markdown 渲染 ── */
