@@ -65,13 +65,16 @@ export default function ConversationList({ sessions, currentId, onOpen, onSessio
       }, 150);
     }, 1000);
   };
-  // 菜单：记录被长按项目相对 .drawer 的上下位置 + 侧栏尺寸，用于固定靠右、优先上方/下方
+  // 菜单：记录被长按项目与侧栏的「视口」坐标（菜单 portal 到 body 用 fixed 定位，
+  // 必须用视口坐标；若用相对 .drawer 的坐标，在 safe-area 偏移下会导致菜单偏离被长按项目）
   const [menu, setMenu] = useState<{
     id: string;
-    itemTop: number;
-    itemBottom: number;
-    drawerHeight: number;
-    drawerRight: number; // 侧栏右边缘的视口 x 坐标（portal 到 body 后用于 fixed 定位）
+    itemTop: number;    // 项目上边缘的视口 y
+    itemBottom: number; // 项目下边缘的视口 y
+    drawerTop: number;  // 侧栏上边缘的视口 y
+    drawerBottom: number; // 侧栏下边缘的视口 y
+    drawerRight: number; // 侧栏右边缘的视口 x
+    itemRight: number;  // 会话卡片右边缘的视口 x（菜单右边缘与之对齐）
   } | null>(null);
   const [menuTop, setMenuTop] = useState(0);
   const menuRef = useRef<HTMLDivElement>(null);
@@ -337,27 +340,37 @@ export default function ConversationList({ sessions, currentId, onOpen, onSessio
       const dRect = drawer.getBoundingClientRect();
       setMenu({
         id: s.id,
-        itemTop: iRect.top - dRect.top,
-        itemBottom: iRect.bottom - dRect.top,
-        drawerHeight: dRect.height,
+        itemTop: iRect.top,
+        itemBottom: iRect.bottom,
+        drawerTop: dRect.top,
+        drawerBottom: dRect.bottom,
         drawerRight: dRect.right,
+        itemRight: iRect.right,
       });
     } else {
       // 兜底：找不到侧栏时按常规绝对定位
-      setMenu({ id: s.id, itemTop: iRect.top, itemBottom: iRect.bottom, drawerHeight: 600, drawerRight: iRect.right });
+      setMenu({
+        id: s.id,
+        itemTop: iRect.top,
+        itemBottom: iRect.bottom,
+        drawerTop: iRect.top,
+        drawerBottom: iRect.top + 600,
+        drawerRight: iRect.right,
+        itemRight: iRect.right,
+      });
     }
   };
 
-  // 菜单挂载后按实际高度校准 top：优先项目上方，上方空间不足则下方，再兜底不越界
+  // 菜单挂载后按实际高度校准 top：优先项目上方，上方空间不足则下方，再兜底不越界（均为视口坐标）
   useLayoutEffect(() => {
     const el = menuRef.current;
     if (!menu || !el) return;
     const h = el.offsetHeight;
     const MARGIN = 6;
     let top = menu.itemTop - h - MARGIN; // 优先上方
-    if (top < 0) top = menu.itemBottom + MARGIN; // 上方不足 → 下方
-    if (top + h > menu.drawerHeight) top = menu.drawerHeight - h; // 兜底不超出侧栏
-    setMenuTop(Math.max(0, top));
+    if (top < menu.drawerTop) top = menu.itemBottom + MARGIN; // 上方不足 → 下方
+    if (top + h > menu.drawerBottom) top = menu.drawerBottom - h; // 兜底不超出侧栏
+    setMenuTop(Math.max(menu.drawerTop, top));
   }, [menu]);
 
   return (
@@ -439,8 +452,8 @@ export default function ConversationList({ sessions, currentId, onOpen, onSessio
         const s = sessions.find((x) => x.id === menu.id);
         if (!s) return null;
         // portal 到 body：与全屏遮罩处于同一 stacking context，
-        // fixed + right 保持菜单贴合侧栏右缘（z-index 100 > 遮罩 90，可点击）
-        const menuRight = window.innerWidth - menu.drawerRight + 8;
+        // fixed + right 使菜单右边缘与会话卡片右边缘对齐（z-index 100 > 遮罩 90，可点击）
+        const menuRight = window.innerWidth - menu.itemRight;
         return createPortal(
           <div
             ref={menuRef}

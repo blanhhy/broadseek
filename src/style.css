@@ -15,7 +15,7 @@
   --accent-bg: #edf3fe;
   --user-bubble: #edf3fe;
   --ai-bubble: #ffffff;
-  --danger: #e5484d;
+  --danger: #ef4444;
   --code-bg: #f2f2f4;
   /* 输入框 / 回到底部按钮：浅色模式用白底 + 浅灰描边 */
   --input-bg: #ffffff;
@@ -28,6 +28,7 @@
   /* Toast：背景与界面背景相反（浅色界面用深色，深色界面用浅色） */
   --toast-bg: #2a2a30;
   --toast-text: #f5f5f5;
+  --dialog-bg: #ffffff;
   /* 编辑模式蒙版：半透明遮住对话区，露出输入框与被编辑气泡 */
   --edit-mask: rgba(255, 255, 255, 0.6);
   font: 16px/1.55 system-ui, 'Segoe UI', Roboto, -apple-system, sans-serif;
@@ -56,7 +57,7 @@
     --accent-bg: #283142;
     --user-bubble: #333333;
     --ai-bubble: #1b1b22;
-    --danger: #ff5c5c;
+    --danger: #f25a5a;
     --code-bg: #1f2028;
     /* 输入框 / 回到底部按钮：深色模式用深灰背景 + 浅灰描边 */
     --input-bg: #242424;
@@ -69,6 +70,7 @@
     /* Toast：背景与界面背景相反（深色界面用浅色，浅色界面用深色） */
     --toast-bg: #ececef;
     --toast-text: #191919;
+    --dialog-bg: #333333;
     /* 编辑模式蒙版：半透明遮住对话区，露出输入框与被编辑气泡 */
     --edit-mask: rgba(0, 0, 0, 0.55);
     color-scheme: dark;
@@ -312,7 +314,7 @@ textarea { font: inherit; resize: none; }
 }
 .conv-item {
   padding: 6px 12px;
-  border-radius: 12px;
+  border-radius: 14px;
   cursor: pointer;
   /* 列表项间微小空隙：分组标题下边缘与首个卡片留出距离，
      使羽化只在卡片上滑接触标题下边界时才显现（官方行为） */
@@ -394,11 +396,10 @@ textarea { font: inherit; resize: none; }
   position: fixed;
   z-index: 100;
   background: var(--bg-elev);
-  border: 1px solid var(--border);
   border-radius: 12px;
   padding: 6px;
   min-width: 160px;
-  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.3);
+  box-shadow: 0 0 8px rgba(0, 0, 0, 0.1);
 }
 .conv-menu-item {
   display: flex;
@@ -423,9 +424,9 @@ textarea { font: inherit; resize: none; }
 .conv-menu-item:disabled { opacity: 0.5; cursor: default; }
 .conv-menu-item-danger { color: var(--danger); }
 .conv-menu-divider {
-  height: 1px;
-  background: var(--border);
-  margin: 4px 0;
+  height: 0.5px;
+  background: var(--border-strong);
+  margin: 2px 0;
 }
 .conv-empty {
   padding: 32px 0;
@@ -1044,30 +1045,30 @@ textarea { font: inherit; resize: none; }
   z-index: 200;
 }
 .confirm-dialog {
-  width: min(320px, 82vw);
-  padding: 24px 20px 16px;
+  width: fit-content;
+  padding: 24px 24px 16px;
   border-radius: 16px;
-  background: var(--bg-elev2);
+  background: var(--dialog-bg);
   color: var(--text);
   text-align: center;
   box-shadow: 0 20px 60px rgba(0, 0, 0, 0.45);
 }
 .confirm-title {
-  font-size: 16px;
+  font-size: 15px;
   font-weight: 500;
   line-height: 1.35;
-  margin-bottom: 6px;
+  margin: 0 24px 6px;
 }
 .confirm-desc {
-  font-size: 13px;
+  font-size: 12.5px;
   color: var(--text-dim);
   line-height: 1.4;
-  margin-bottom: 18px;
+  margin: 0 24px 18px;
 }
 .confirm-btn {
   display: block;
   width: 100%;
-  padding: 11px 0px;
+  padding: 8px 0px;
   border-radius: 999px;
   font-size: 15px;
   font-weight: 500;
@@ -1084,4 +1085,5 @@ textarea { font: inherit; resize: none; }
   background: transparent;
   color: var(--text-dim);
 }
-.confirm-btn-cancel:hover { color: var(--text); }
+/* 取消按钮：hover 改变背景色而非文字色 */
+.confirm-btn-cancel:hover { background: var(--bg-hover); }
