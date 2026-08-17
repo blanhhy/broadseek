@@ -79,6 +79,10 @@ export default function ChatPage() {
     let fromOpen = false; // 拖拽是否从「打开」状态开始
     let v = 0;
     let suppressClick = false; // 拖拽手势结束后抑制 click 穿透（防止误触抽屉内元素）
+    // 手势方向锁定：任一轴先超出死区即锁定，之后不可切换。
+    //  'x' = 抽屉手势（锁定列表滚动、只跟 x）；'y' = 纵向滚动手势（放行滚动、不接管抽屉）。
+    //  避免斜向滑动时「既收起抽屉又滚动列表」。
+    let axis: 'x' | 'y' | null = null;
 
     const leftEl = () => document.querySelector<HTMLElement>('.drawer-left');
     const rightEl = () => document.querySelector<HTMLElement>('.drawer-right');
@@ -112,23 +116,31 @@ export default function ChatPage() {
       startX = x;
       startY = t.clientY;
       v = fromOpen ? 0 : (isLeft ? -width : width);
+      axis = null;
     };
     const onMove = (e: TouchEvent) => {
       if (!drawer) return;
       const t = e.touches[0];
       const dx = t.clientX - startX;
       const dy = t.clientY - startY;
-      if (Math.abs(dx) <= DEAD || Math.abs(dx) <= Math.abs(dy)) return; // 纵向滚动/死区内不拦截
+      if (axis === null) {
+        // 方向竞争：任一轴先超出死区即锁定手势方向（之后不可中途切换）
+        if (Math.abs(dx) <= DEAD && Math.abs(dy) <= DEAD) return; // 都在死区内，继续观望
+        axis = Math.abs(dx) > Math.abs(dy) ? 'x' : 'y';
+      }
+      if (axis === 'y') return; // 纵向滚动手势：放行列表滚动，全程不接管抽屉
+      // 抽屉手势（axis === 'x'）：锁定列表滚动/下拉刷新，抽屉始终跟随 x 位移
+      e.preventDefault();
       const isLeft = drawer === 'left';
       // 只跟「拉出方向」：左栏 关闭态右滑/打开态左滑，右栏 关闭态左滑/打开态右滑
       const moving = isLeft ? (fromOpen ? dx < 0 : dx > 0) : (fromOpen ? dx > 0 : dx < 0);
-      if (!moving) return;
-      e.preventDefault();
-      v = isLeft ? Math.min(0, Math.max(-width, startV0() + dx)) : Math.max(0, Math.min(width, startV0() + dx));
-      const el = isLeft ? leftEl() : rightEl();
-      if (el) {
-        el.style.transition = 'none';
-        el.style.setProperty('--drawer-x', `${v}px`);
+      if (moving) {
+        v = isLeft ? Math.min(0, Math.max(-width, startV0() + dx)) : Math.max(0, Math.min(width, startV0() + dx));
+        const el = isLeft ? leftEl() : rightEl();
+        if (el) {
+          el.style.transition = 'none';
+          el.style.setProperty('--drawer-x', `${v}px`);
+        }
       }
     };
     const startV0 = () => (fromOpen ? 0 : (drawer === 'left' ? -width : width));
@@ -136,6 +148,13 @@ export default function ChatPage() {
       if (!drawer) return;
       const isLeft = drawer === 'left';
       const el = isLeft ? leftEl() : rightEl();
+      if (axis === 'y') {
+        // 纵向滚动手势：抽屉未被拖动，直接清理，不做吸附
+        clearDrag(el);
+        axis = null;
+        drawer = null;
+        return;
+      }
       if (el) {
         // 用 touchend 实际坐标校正最终位移：
         // 触摸采样稀疏时，最后一个 touchmove 可能滞后于手指位置，导致 v 误判（松手回弹）。
@@ -179,12 +198,14 @@ export default function ChatPage() {
           });
         }
       }
+      axis = null;
       drawer = null;
     };
     const onCancel = () => {
       if (!drawer) return;
       const el = drawer === 'left' ? leftEl() : rightEl();
       clearDrag(el); // 回弹到 class 当前态
+      axis = null;
       drawer = null;
     };
 

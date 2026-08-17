@@ -1,5 +1,6 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
+import { Haptics } from '@capacitor/haptics';
 import type { ChatSession } from '../core/api/types';
 import { createShare, deleteSession, forkShare, fetchHistory, normalizeMessage, renameSession } from '../core/api/client';
 import { activePathOf, buildIndex } from '../core/api/tree';
@@ -78,6 +79,10 @@ export default function ConversationList({ sessions, currentId, onOpen, onSessio
   const listRef = useRef<HTMLDivElement>(null);
   const ptrRef = useRef<HTMLDivElement>(null);
   const PTR_H = 44; // 指示器高度（px）
+  // 下拉刷新参数
+  const PULL_MAX = 120; // 指示器最大下拉位移（px）
+  const PULL_DAMPING = 0.5; // 手指实际下拉距离的阻尼系数
+  const PULL_TRIGGER = 100; // 触发刷新的指示器位移阈值（px）
   // 内联重命名编辑状态（window.prompt 在部分环境被禁用，改用内联输入）
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editValue, setEditValue] = useState('');
@@ -255,6 +260,7 @@ export default function ConversationList({ sessions, currentId, onOpen, onSessio
     if (!sc) return;
     let startY: number | null = null;
     let dist = 0;
+    let hapticed = false; // 本次手势是否已振动（跨过阈值仅振一次）
     const onStart = (e: TouchEvent) => {
       if (menu || refreshingRef.current || sc.scrollTop > 0) { startY = null; return; }
       startY = e.touches[0].clientY;
@@ -267,7 +273,7 @@ export default function ConversationList({ sessions, currentId, onOpen, onSessio
         return;
       }
       e.preventDefault(); // 阻止列表随手指滚动
-      dist = Math.min(120, dy * 0.5);
+      dist = Math.min(PULL_MAX, dy * PULL_DAMPING);
       if (listRef.current) {
         listRef.current.style.transition = 'none';
         listRef.current.style.transform = `translateY(${dist}px)`;
@@ -276,12 +282,20 @@ export default function ConversationList({ sessions, currentId, onOpen, onSessio
         ptrRef.current.style.transition = 'none';
         ptrRef.current.style.transform = `translateY(${dist - PTR_H}px)`;
         const label = ptrRef.current.querySelector('span');
-        if (label) label.textContent = dist >= 64 ? '松开刷新' : '下拉刷新';
+        if (label) label.textContent = dist >= PULL_TRIGGER ? '松开刷新' : '下拉刷新';
+        // 跨过触发阈值时振动一次；回落到阈值以下后重置，允许再次越过时再振
+        if (dist >= PULL_TRIGGER && !hapticed) {
+          hapticed = true;
+          // WebView 不实现 navigator.vibrate，改用原生 Haptics 插件
+          void Haptics.vibrate({ duration: 20 }).catch(() => { /* 无振动能力时忽略 */ });
+        } else if (dist < PULL_TRIGGER) {
+          hapticed = false;
+        }
       }
     };
     const onEnd = () => {
       if (startY == null) return;
-      const should = dist >= 64;
+      const should = dist >= PULL_TRIGGER;
       startY = null;
       dist = 0;
       resetPullDom();
@@ -374,7 +388,7 @@ export default function ConversationList({ sessions, currentId, onOpen, onSessio
             {list.map((s) => (
               <div
                 key={s.id}
-                className={`conv-item ${s.id === currentId ? 'active' : ''}`}
+                className={`conv-item ${s.id === currentId ? 'active' : ''}${menu && menu.id === s.id ? ' menu-anchor' : ''}`}
                 onClick={() => { if (editingId !== s.id) onOpen(s.id); }}
                 onContextMenu={(e) => openMenu(e, s)}
               >
@@ -405,6 +419,14 @@ export default function ConversationList({ sessions, currentId, onOpen, onSessio
           </div>
         ))}
       </div>
+
+      {/* 菜单展开期间：全屏遮罩（portal 到 body）拦截外部交互，点击任意位置收起菜单；
+          透明背景，视觉上无变化，仅禁止外部点击 */}
+      {menu &&
+        createPortal(
+          <div className="conv-menu-mask" onClick={() => setMenu(null)} aria-hidden="true" />,
+          document.body,
+        )}
 
       {menu && (() => {
         const s = sessions.find((x) => x.id === menu.id);
