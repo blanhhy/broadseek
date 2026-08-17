@@ -231,13 +231,15 @@ export default function ChatPage() {
           }
           suppressClick = true;
           window.setTimeout(() => { suppressClick = false; }, 350);
-          // 吸附动画：先恢复 class 的 0.28s 过渡，下一帧（transition 已生效）再写入目标值。
-          // 若同一帧内「恢复过渡 + 改 transform」，部分 WebView 会认为变化发生在过渡生效前，
-          // 直接跳变到最终位置（无过渡动画），表现为「松手瞬间立即完全关闭」。
+          // 吸附动画：先确保「无过渡」且以当前位置重排提交一帧，确立为动画起点；
+          // 随后恢复 0.28s 过渡并同步写入目标值（同帧完成、无 rAF 等待），
+          // 避免松手瞬间因 rAF 被主线程拖慢而「定住」0.1~0.2s 再动。
+          // 重排把「无过渡起点」与「过渡+新值」隔开，规避同帧改过渡+改 transform 的跳变。
+          el.style.transition = 'none';
+          el.style.setProperty('--drawer-x', `${v}px`);
+          void el.offsetWidth; // 强制重排，提交当前帧（无过渡的当前位置）
           el.style.transition = '';
-          requestAnimationFrame(() => {
-            el.style.setProperty('--drawer-x', `${targetV}px`);
-          });
+          el.style.setProperty('--drawer-x', `${targetV}px`);
         };
         // 极速滑动：整段拖动的手指平均速度超阈值则直接完成整个动作（优先于位移阈值判断）
         let flickOpen = false, flickClose = false;
