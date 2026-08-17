@@ -838,25 +838,33 @@ textarea { font: inherit; resize: none; }
   max-width: 100%;
   margin-bottom: 6px;
   color: var(--text-dim);
+  /* 禁用滚动锚定：展开/收起会整体推拉下方内容，
+     若开启默认的 overflow-anchor，浏览器会反向补偿滚动，导致动画期间下方文本乱跳 */
+  overflow-anchor: none;
 }
-.msg-thinking summary {
+/* 标题（原 summary 改为 button，需重置浏览器默认样式） */
+.msg-thinking-toggle {
   list-style: none;
   cursor: pointer;
   display: flex;
   align-items: center;
   gap: 8px;
+  width: 100%;
+  padding: 0;
+  border: none;
+  background: var(--bg);
+  font-family: inherit;
   font-size: 15px;
   color: var(--text-dim);
-  /* 展开后上滑时标题钉在消息区顶部，方便随时收起；
-     负 top = -padding-top(16px)，让标题真正贴住顶栏（0 距离） */
+  text-align: left;
+  /* 展开后上滑时标题钉在消息区可视顶部，方便随时收起 */
   position: sticky;
-  top: -16px;
+  top: -4px;
   z-index: 2;
-  background: var(--bg);
 }
 /* 钉住标题下边缘羽化：标题与 thinking body 一体（无独立背景卡片），
    羽化叠加在 body 上是自然过渡，始终显示 */
-.msg-thinking summary::after {
+.msg-thinking-toggle::after {
   content: '';
   position: absolute;
   left: 0;
@@ -866,26 +874,36 @@ textarea { font: inherit; resize: none; }
   background: linear-gradient(to bottom, var(--bg), transparent);
   pointer-events: none;
 }
-.msg-thinking summary::-webkit-details-marker { display: none; }
-.msg-thinking summary .think-arrow {
+.msg-thinking-toggle .think-arrow {
   flex: 0 0 auto;
   width: 1em;
   height: 1em;
   vertical-align: middle;
   stroke-width: 2px;
-  transition: transform 0.2s ease;
+  transition: transform 0.25s cubic-bezier(0.4, 0, 0.2, 1);
 }
-.msg-thinking[open] summary .think-arrow {
+.msg-thinking.open .think-arrow {
   transform: rotate(90deg);
 }
 .thinking-body {
-  margin: 6px 6px 16px;
-  padding: 0 0 0 16px;
+  height: auto;
+  margin: 0;
+  overflow: hidden;
   border-left: 1.5px solid var(--border);
   color: var(--text-dim);
+  font-size: 14px;
+  transition: height 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+}
+/* 收起态默认锁 0 高；展开动画由 JS 内联 height 驱动，此处不停留 height 规则以免覆盖 */
+.msg-thinking:not(.open) .thinking-body { height: 0; }
+/* 上/下间距与左缩进放在内层：外层 height 塌到 0 时无 padding 残留，
+   收缩态内容被彻底裁掉不漏行 */
+.thinking-body-inner {
+  padding: 6px 6px 16px 16px;
   white-space: pre-wrap;
   overflow-wrap: anywhere;
-  font-size: 14px;
+  overflow: hidden;
+  min-height: 0;
 }
 /* 思考内容里的 markdown 覆盖 .markdown 默认字号（15px），继承 thinking-body 的字号 */
 .thinking-body .markdown { font-size: inherit; }
@@ -972,7 +990,19 @@ textarea { font: inherit; resize: none; }
   background: var(--bg);
   z-index: 0;
 }
-/* 编辑模式提示条：内置于输入卡片顶部，半圆角（顶部圆角与卡片一致） */
+/* 编辑模式提示条：内置于输入卡片顶部，半圆角（顶部圆角与卡片一致）。
+   外层 wrap 用 grid-rows 0fr↔1fr 过渡实现出现/消失时的平滑推拉，避免卡片瞬时增高 */
+.edit-banner-wrap {
+  display: grid;
+  grid-template-rows: 0fr;
+  transition: grid-template-rows 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+}
+.edit-banner-wrap.editing { grid-template-rows: 1fr; }
+/* 裁掉收拢时溢出的内容（行高 0 时不可见） */
+.edit-banner-inner {
+  overflow: hidden;
+  min-height: 0;
+}
 .edit-banner {
   display: flex;
   align-items: center;

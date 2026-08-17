@@ -279,20 +279,24 @@ export default function InputBar({ sessionId }: Props) {
   return (
     <div className="input-bar">
       <div className="input-card">
-        {editingMessageId != null && (
-          <div className="edit-banner">
-            <span>修改输入</span>
-            <button
-              className="edit-cancel"
-              aria-label="取消编辑"
-              onClick={() => { setEditingMessageId(null); setText(''); }}
-            >
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" aria-hidden="true">
-                <path d="M6 6l12 12M18 6L6 18" />
-              </svg>
-            </button>
+        {/* 编辑提示条：始终挂载，用 editing class 控制 grid-rows 展开/收起，
+            进入与退出都能平滑推拉（条件渲染会直接 mount 无动画） */}
+        <div className={`edit-banner-wrap${editingMessageId != null ? ' editing' : ''}`}>
+          <div className="edit-banner-inner">
+            <div className="edit-banner">
+              <span>修改输入</span>
+              <button
+                className="edit-cancel"
+                aria-label="取消编辑"
+                onClick={() => { setEditingMessageId(null); setText(''); }}
+              >
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" aria-hidden="true">
+                  <path d="M6 6l12 12M18 6L6 18" />
+                </svg>
+              </button>
+            </div>
           </div>
-        )}
+        </div>
         <div className="input-textarea-container">
           <textarea
             ref={taRef}

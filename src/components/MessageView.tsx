@@ -82,6 +82,80 @@ function Bubble({ m, onToggleActions }: { m: NormalizedMessage; onToggleActions?
     onToggleActions();
   };
 
+  // thinking 块受控展开/收起（带高度推拉动画）：
+  // 用实测内联 height 过渡替代 grid-template-rows（后者在 WebView 上逐帧触发 layout）。
+  // 高度变化的"内容跑到上方/标题弹出视口"，根因是滚动容器默认 overflow-anchor 会补偿滚动，
+  // 所以动画期间临时关掉容器锚定；并在标题 flow 位置贴住/超出视口上缘时，把它最小对齐到顶部。
+  // 其余情况（标题完整可见）不做任何滚动，原地推拉
+  const [thinkOpen, setThinkOpen] = useState(false);
+  const thinkBtnRef = useRef<HTMLButtonElement>(null);
+  const thinkingBodyRef = useRef<HTMLDivElement>(null);
+  const thinkOpening = useRef(false); // 记录本次过渡是展开还是收起，用于 transitionend 收尾
+
+  // 标题 flow（未吸顶）位置若已贴住/超出视口上缘，则滚动让它刚好对齐到顶部
+  const settleTitle = () => {
+    const sc2 = document.querySelector('.msg-scroll') as HTMLElement | null;
+    const btn2 = thinkBtnRef.current;
+    if (!sc2 || !btn2) return;
+    const saved = btn2.style.position;
+    btn2.style.position = 'static'; // 临测未吸顶的 flow 位置
+    const flowTop = btn2.getBoundingClientRect().top - sc2.getBoundingClientRect().top;
+    btn2.style.position = saved;
+    if (flowTop <= 4) sc2.scrollTop += flowTop; // 已贴顶或超出 → 上移对齐
+  };
+
+  const handleThinkToggle = () => {
+    const body = thinkingBodyRef.current;
+    const sc = document.querySelector('.msg-scroll') as HTMLElement | null;
+    // 动画期间关掉滚动容器锚定，消除高度变化引发的补偿滚动；
+    // 用 dataset 记录锁定时刻，稍后由 onScroll（用户手动滚动）恢复，
+    // 避免在动画结束后立刻恢复触发浏览器重锚定跳回标题上方
+    if (sc) {
+      sc.style.overflowAnchor = 'none';
+      sc.dataset.thinkAnchorLocked = String(Date.now());
+    }
+    if (!thinkOpen) {
+      // 展开：先锁在 0，量好目标高度后 rAF 过渡到该高度。
+      // 展开不改滚动（避免网页端 onScroll→重渲染把该块重挂载导致立刻收起），
+      // "内容往下推/不跑到上方"由关闭容器锚定保证
+      thinkOpening.current = true;
+      setThinkOpen(true);
+      if (body) {
+        body.style.height = '0px';
+        body.getBoundingClientRect(); // 强制回流，确保从 0 起动画
+        const full = body.scrollHeight;
+        requestAnimationFrame(() => {
+          if (body) body.style.height = full + 'px';
+        });
+      }
+    } else {
+      // 收起前先 settleTitle：标题 flow 已贴住/超出视口上缘时上移对齐，避免包含块变矮
+      // 触发 sticky 释放导致标题弹出视口
+      thinkOpening.current = false;
+      settleTitle();
+      setThinkOpen(false);
+      if (body) {
+        body.style.height = body.offsetHeight + 'px';
+        body.getBoundingClientRect();
+        requestAnimationFrame(() => {
+          if (body) body.style.height = '0px';
+        });
+      }
+    }
+  };
+  const handleThinkTransitionEnd = (e: React.TransitionEvent) => {
+    if (e.target !== thinkingBodyRef.current) return;
+    if (e.propertyName !== 'height') return;
+    const body = thinkingBodyRef.current;
+    if (thinkOpening.current && body) {
+      // 展开完成：解除内联高度，交给内容自适应（流式更新时不被裁剪）
+      thinkOpening.current = false;
+      body.style.height = '';
+    }
+    // 不在此处恢复容器锚定——恢复会触发浏览器重锚定，导致网页端展开完立刻跳回标题上方。
+    // 锚定延迟到用户真正开始手动滚动（onScroll，且距上次切换 >350ms）后再恢复
+  };
+
   return (
     <div
       className={`msg-row ${isUser ? 'user' : 'ai'}${m.id === editingMessageId ? ' editing' : ''}`}
@@ -90,24 +164,12 @@ function Bubble({ m, onToggleActions }: { m: NormalizedMessage; onToggleActions?
       onContextMenu={isUser && !m.ban_edit ? (e) => { e.preventDefault(); handleEdit(); } : undefined}
     >
       {!isUser && m.thinking && (
-        <details className="msg-thinking">
-          <summary
-            onClick={(e) => {
-              // 收纳 thinking 块时保持标题的屏幕位置：关闭瞬间 body 塌缩会让标题上移，
-              // 通过补偿滚动把标题拉回原位置（展开时 body 向下延伸，标题本就不动，无需处理）。
-              if (!e.defaultPrevented && (e.currentTarget.parentElement as HTMLDetailsElement).open) {
-                const sc = document.querySelector('.msg-scroll');
-                const el = e.currentTarget;
-                if (sc) {
-                  const before = el.getBoundingClientRect().top - sc.getBoundingClientRect().top;
-                  const details = el.parentElement as HTMLDetailsElement;
-                  details.open = false;
-                  const after = el.getBoundingClientRect().top - sc.getBoundingClientRect().top;
-                  sc.scrollTop += after - before;
-                  e.preventDefault(); // 已手动关闭，阻止默认再触发一次
-                }
-              }
-            }}
+        <div className={`msg-thinking${thinkOpen ? ' open' : ''}`}>
+          <button
+            type="button"
+            className="msg-thinking-toggle"
+            ref={thinkBtnRef}
+            onClick={handleThinkToggle}
           >
             <span>
               {m.thinking.elapsed_secs != null
@@ -117,13 +179,15 @@ function Bubble({ m, onToggleActions }: { m: NormalizedMessage; onToggleActions?
             <svg className="think-arrow" width="1em" height="1em" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
               <path d="M9 6l6 6-6 6" />
             </svg>
-          </summary>
+          </button>
           {m.thinking.content && (
-            <div className="thinking-body">
-              <Markdown text={m.thinking.content} />
+            <div className="thinking-body" ref={thinkingBodyRef} onTransitionEnd={handleThinkTransitionEnd}>
+              <div className="thinking-body-inner">
+                <Markdown text={m.thinking.content} />
+              </div>
             </div>
           )}
-        </details>
+        </div>
       )}
       <div className="msg-bubble">
         <div className="msg-content">
@@ -796,6 +860,15 @@ const MessageView = forwardRef<MessageViewHandle, Props>(function MessageView(
       // 自底向上渲染：未渲染的更早消息在顶部，滚动接近顶部时提前补齐，避免空白
       const el = scrollRef.current;
       if (el) {
+        // thinking 切换时临时关掉了容器锚定：待动画结束(>350ms)后，用户手动滚动时再恢复，
+        // 避免在展开/收起完成后立刻恢复被浏览器重锚定跳移
+        if (el.style.overflowAnchor === 'none' && el.dataset.thinkAnchorLocked) {
+          const locked = Number(el.dataset.thinkAnchorLocked);
+          if (Date.now() - locked > 350) {
+            el.style.overflowAnchor = '';
+            delete el.dataset.thinkAnchorLocked;
+          }
+        }
         if (el.scrollTop < 240) {
           setRenderCount((c) => Math.min(c + BATCH, pathMessages.length));
         }
