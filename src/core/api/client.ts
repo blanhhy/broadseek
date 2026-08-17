@@ -480,6 +480,58 @@ export async function editMessage(
   await streamSse(`${BASE}/chat/edit_message`, headers, fullBody, onEvent, signal);
 }
 
+// 编辑消息的 completion 降级路径（绕过服务端 edit_limit 分支数限制）
+//
+// 背景（逆向结论，2026-08 实测验证）：
+//  服务端对 /chat/edit_message 端点施加分支数限制：同一父消息下子分支数 ≥6 时，
+//  edit_message 返回 SSE 错误事件 {type:"error", finish_reason:"edit_limit",
+//  content:"Edit limit reached. Message not sent."}，请求被拒绝。
+//  但 /chat/completion 端点不做该检查（实测满载父下可无限创建分支）。
+//
+//  从官方客户端源码看（2.1.0 / 2.3.6 一致），ChatEditMessageRequest 本就是
+//  ChatCompletionRequest 密封类的子类型之一：编辑的请求体是
+//  {chat_session_id, message_id, prompt, ref_file_ids, thinking_enabled,
+//   search_enabled, client_stream_id, action}，而普通发消息（ChatFullCompletionRequest）
+//  用 parent_message_id 指定新分支的父。两者在"于某父消息下创建新 USER+AI 分支"上等价，
+//  只是服务端只对 edit_message 端点做分支数校验。
+//
+//  因此"编辑重发"在满载时可降级为：completion(parent_message_id = 被编辑用户消息的父消息 id)。
+//  效果与 edit_message 一致（原消息保留，新分支挂在父下），且不受 edit_limit 限制。
+//
+//  注意：
+//  - 这是绕过服务端限制的降级路径，是否启用应作为用户设置项（默认关闭），
+//    等设置页上线后再接线；当前仅暴露接口供后续调用。
+//  - completion 的 parent 必须是 AI 消息或 null（服务端对 USER 角色返回
+//    "invalid message role"），调用方需传被编辑用户消息的父消息 id。
+export interface EditFallbackBody {
+  chat_session_id: string;
+  /** 被编辑用户消息的父消息 id（必须为 AI 消息或 null 语义） */
+  parent_message_id: number | null;
+  prompt: string;
+  search_enabled?: boolean;
+  thinking_enabled?: boolean;
+}
+
+export async function editMessageFallback(
+  body: EditFallbackBody,
+  onEvent: (obj: Record<string, any>) => void,
+  signal?: AbortSignal,
+): Promise<void> {
+  const { chat_session_id, parent_message_id, prompt, search_enabled, thinking_enabled } = body;
+  await sendCompletion(
+    {
+      chat_session_id,
+      parent_message_id,
+      prompt,
+      search_enabled,
+      thinking_enabled,
+    },
+    onEvent,
+    signal,
+  );
+}
+
+
 // 重新生成 AI 回复（SSE 流式）
 // 官方 web 端点 /chat/regenerate：child_message_id 为被重新生成的 AI 消息 id，
 // 服务器在其父提问下创建新的兄弟回复（与 completion 的 parent 语义不同，
