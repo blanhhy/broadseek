@@ -450,13 +450,7 @@ export async function sendCompletion(
   signal?: AbortSignal,
 ): Promise<void> {
   const powHeader = await withPow('/api/v0/chat/completion');
-  const headers: Record<string, string> = {
-    'Content-Type': 'application/json',
-    'User-Agent': navigator.userAgent,
-    'X-App-Version': '2025.04.25',
-    'X-Ds-Pow-Response': powHeader,
-    Authorization: `Bearer ${_token}`,
-  };
+  const headers = sseHeaders(powHeader);
   // completion 必填字段：缺失任一会被服务端以 HTTP 422 拒绝，这里补全默认值（调用方可覆盖）
   const fullBody = {
     model_type: 'default',
@@ -484,13 +478,7 @@ export async function editMessage(
   signal?: AbortSignal,
 ): Promise<void> {
   const powHeader = await withPow('/api/v0/chat/edit_message');
-  const headers: Record<string, string> = {
-    'Content-Type': 'application/json',
-    'User-Agent': navigator.userAgent,
-    'X-App-Version': '2025.04.25',
-    'X-Ds-Pow-Response': powHeader,
-    Authorization: `Bearer ${_token}`,
-  };
+  const headers = sseHeaders(powHeader);
   const fullBody = {
     thinking_enabled: true,
     search_enabled: true,
@@ -570,13 +558,7 @@ export async function regenerateMessage(
   signal?: AbortSignal,
 ): Promise<void> {
   const powHeader = await withPow('/api/v0/chat/completion');
-  const headers: Record<string, string> = {
-    'Content-Type': 'application/json',
-    'User-Agent': navigator.userAgent,
-    'X-App-Version': '2025.04.25',
-    'X-Ds-Pow-Response': powHeader,
-    Authorization: `Bearer ${_token}`,
-  };
+  const headers = sseHeaders(powHeader);
   const fullBody = {
     thinking_enabled: true,
     search_enabled: true,
@@ -584,6 +566,25 @@ export async function regenerateMessage(
     ...body,
   };
   await streamSse(`${BASE}/chat/regenerate`, headers, fullBody, onEvent, signal);
+}
+
+// SSE 流式请求的公共头（completion / edit_message / regenerate）。
+// 必须带客户端标识头 x-client-*（对齐官方 web 端 2.3.0）：
+// 服务端对带图片附件的会话（vision 模型）会校验客户端身份，缺这些头时
+// /chat/regenerate 会被以 "ban regenerate" 拒绝。
+function sseHeaders(powHeader: string): Record<string, string> {
+  return {
+    'Content-Type': 'application/json',
+    'User-Agent': navigator.userAgent,
+    'X-App-Version': '2025.04.25',
+    'X-Ds-Pow-Response': powHeader,
+    Authorization: `Bearer ${_token}`,
+    'x-client-bundle-id': 'com.deepseek.chat',
+    'x-client-platform': isNativeRuntime() ? 'android' : 'web',
+    'x-client-version': '2.3.0',
+    'x-client-locale': 'zh_CN',
+    'x-client-timezone-offset': String(-new Date().getTimezoneOffset() * 60),
+  };
 }
 
 // ── SSE 流式读取（原生桥 / fetch 双后端）──
@@ -618,6 +619,14 @@ async function fetchStreamSse(
   if (!resp.ok || !resp.body) {
     throw new ApiError(`completion HTTP ${resp.status}`);
   }
+  const ctype = resp.headers.get('content-type') ?? '';
+  // 服务端可能直接返回非 SSE 的 JSON 封套（如 regenerate 被拒：{code:0,data:{biz_code:4}}），
+  // 此时逐行解析会静默吞掉错误。读到完整文本后统一走封套校验。
+  if (!ctype.includes('event-stream')) {
+    const text = await resp.text();
+    throwApiEnvelopeError(text);
+    return;
+  }
   const reader = resp.body.getReader();
   const decoder = new TextDecoder();
   let buffer = '';
@@ -632,11 +641,37 @@ async function fetchStreamSse(
       if (!line.startsWith('data:')) continue;
       const payload = line.slice(5).trim();
       if (!payload || payload === '[DONE]') continue;
+      let ev: any;
       try {
-        onEvent(JSON.parse(payload));
+        ev = JSON.parse(payload);
       } catch {
-        /* 忽略坏帧 */
+        continue; /* 忽略坏帧 */
       }
+      // 服务端以 SSE 事件返回业务拒绝：{type:"error", content, finish_reason}
+      if (ev && ev.type === 'error') {
+        throw new ApiError(ev.content || '请求被拒绝', -1, typeof ev.biz_code === 'number' ? ev.biz_code : -1);
+      }
+      onEvent(ev);
+    }
+  }
+}
+
+// 校验业务封套：code/biz_code 非 0 时抛 ApiError；正常则忽略（非 SSE 请求无 data: 前缀）
+function throwApiEnvelopeError(text: string) {
+  let json: any;
+  try {
+    json = JSON.parse(text);
+  } catch {
+    return;
+  }
+  if (json && typeof json === 'object') {
+    const env = json as Envelope;
+    if (env.code !== 0) {
+      throw new ApiError(env.msg || `系统错误 ${env.code}`, env.code);
+    }
+    const biz = env.data;
+    if (biz && biz.biz_code !== 0) {
+      throw new ApiError(biz.biz_msg || `业务错误 ${biz.biz_code}`, env.code, biz.biz_code);
     }
   }
 }
@@ -671,11 +706,19 @@ async function nativeStreamSse(
   await new Promise<void>((resolve, reject) => {
     const handler = (ev: DsSseEvent) => {
       if (ev.type === 'data' && ev.payload) {
+        let obj: any;
         try {
-          onEvent(JSON.parse(ev.payload));
+          obj = JSON.parse(ev.payload);
         } catch {
-          /* 忽略坏帧 */
+          return; /* 忽略坏帧 */
         }
+        // 服务端以 SSE 事件返回业务拒绝：{type:"error", content, finish_reason}
+        if (obj && obj.type === 'error') {
+          sseHandlers.delete(key);
+          reject(new ApiError(obj.content || '请求被拒绝', -1, typeof obj.biz_code === 'number' ? obj.biz_code : -1));
+          return;
+        }
+        onEvent(obj);
       } else if (ev.type === 'end') {
         sseHandlers.delete(key);
         resolve();

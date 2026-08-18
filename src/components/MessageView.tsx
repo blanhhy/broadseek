@@ -5,7 +5,7 @@ import { forwardRef, memo, useCallback, useEffect, useImperativeHandle, useLayou
 import { createPortal } from 'react-dom';
 import type { NormalizedMessage } from '../core/api/types';
 import { buildIndex, branchSiblings, switchBranchPath, activePathOf } from '../core/api/tree';
-import { regenerateMessage, fetchHistory, normalizeMessage, enrichMessageFiles } from '../core/api/client';
+import { regenerateMessage, fetchHistory, normalizeMessage, enrichMessageFiles, ApiError } from '../core/api/client';
 import { DeltaParser, nextTempId } from '../core/api/delta';
 import { useConversation } from '../core/store';
 import Markdown from './Markdown';
@@ -624,7 +624,16 @@ const MessageView = forwardRef<MessageViewHandle, Props>(function MessageView(
         activePath: prevPath,
         currentMessageId: prevPath[prevPath.length - 1] ?? null,
       }));
-      showToast('重新生成失败');
+      // 服务端拒绝（"ban regenerate" / "重新生成次数超过限制"）映射为友好文案；
+      // 其余错误透出失败提示
+      const text = e instanceof ApiError ? e.message : '';
+      if (/ban regenerate/i.test(text)) {
+        showToast('该消息暂不支持重新生成');
+      } else if (/regeneration_limit|次数|limit/i.test(text)) {
+        showToast('重新生成次数超过限制');
+      } else {
+        showToast(text || '重新生成失败');
+      }
     } finally {
       setRegenerating(false);
       setStreaming(false);
