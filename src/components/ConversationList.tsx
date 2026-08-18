@@ -414,6 +414,7 @@ export default function ConversationList({ sessions, currentId, onOpen, onSessio
               <div
                 key={s.id}
                 className={`conv-item ${s.id === currentId ? 'active' : ''}${menu && menu.id === s.id ? ' menu-anchor' : ''}`}
+                title={fmtTime(s.updated_at)}
                 onClick={() => { if (editingId === s.id) return; setMenu(null); onOpen(s.id); }}
                 onContextMenu={(e) => openMenu(e, s)}
                 // 触屏：移动端 :hover 在长按后会残留，故触摸时手动挂 .t-hover，
@@ -440,9 +441,6 @@ export default function ConversationList({ sessions, currentId, onOpen, onSessio
                   ) : (
                     s.title || '未命名对话'
                   )}
-                </div>
-                <div className="conv-item-meta">
-                  <span>{fmtTime(s.updated_at)}</span>
                 </div>
               </div>
             ))}

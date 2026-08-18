@@ -313,8 +313,8 @@ textarea { font: inherit; resize: none; }
   pointer-events: none;
 }
 .conv-item {
-  padding: 6px 12px;
-  border-radius: 14px;
+  padding: 8px 12px;
+  border-radius: 15px;
   cursor: pointer;
   /* 列表项间微小空隙：分组标题下边缘与首个卡片留出距离，
      使羽化只在卡片上滑接触标题下边界时才显现（官方行为） */
@@ -344,7 +344,10 @@ textarea { font: inherit; resize: none; }
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  line-height: 1.3;
+  /* 标题与编辑态输入框同高：输入框的边框+padding 会让编辑时行高被撑大，
+     这里让标题原生占满相同高度（24px），切换编辑时行高不再跳动 */
+  height: 24px;
+  line-height: 24px;
 }
 /* 会话标题内联重命名输入框 */
 .conv-item-edit {
@@ -352,6 +355,8 @@ textarea { font: inherit; resize: none; }
   font: inherit;
   font-size: 14px;
   font-weight: 500;
+  line-height: 18px; /* border-box 下 height 24 = 内容18 + 上下padding 4 + 上下border 2 */
+  height: 24px;
   color: var(--text);
   background: var(--bg-elev2);
   border: 1px solid var(--border-strong);
@@ -360,15 +365,7 @@ textarea { font: inherit; resize: none; }
   outline: none;
 }
 .conv-item-edit:focus { border-color: var(--accent); }
-.conv-item-meta {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  font-size: 11px;
-  color: var(--text-faint);
-}
-.conv-item.active .conv-item-title,
-.conv-item.active .conv-item-meta { color: var(--accent-text); }
+.conv-item.active .conv-item-title { color: var(--accent-text); }
 
 /* ── 会话右键菜单 ──
    portal 到 body，fixed 定位（top/right 由组件按侧栏位置计算）：
