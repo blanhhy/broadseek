@@ -369,17 +369,6 @@ textarea { font: inherit; resize: none; }
 }
 .conv-item.active .conv-item-title,
 .conv-item.active .conv-item-meta { color: var(--accent-text); }
-.fork-btn {
-  width: 24px;
-  height: 24px;
-  border-radius: 6px;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  color: var(--text-dim);
-}
-.fork-btn:hover { background: var(--bg-hover); color: var(--text); }
-.fork-btn:disabled { opacity: 0.5; }
 
 /* ── 会话右键菜单 ──
    portal 到 body，fixed 定位（top/right 由组件按侧栏位置计算）：
