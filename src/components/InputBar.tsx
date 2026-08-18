@@ -1,7 +1,7 @@
 // 底部输入栏：发送消息（乐观 UI：立即在对话页追加 User，流式生成 AI，失败撤回）
 import { useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { sendCompletion, editMessage, fetchHistory, normalizeMessage, enrichMessageFiles, ApiError } from '../core/api/client';
+import { sendCompletion, editMessageFallback, fetchHistory, normalizeMessage, enrichMessageFiles, ApiError } from '../core/api/client';
 import { useConversation } from '../core/store';
 import { buildIndex, activePathOf } from '../core/api/tree';
 import { DeltaParser, FragmentTracker, nextTempId } from '../core/api/delta';
@@ -173,11 +173,14 @@ export default function InputBar({ sessionId }: Props) {
             ),
           }));
         };
-        await editMessage(
+        await editMessageFallback(
           {
             chat_session_id: sessionId,
-            message_id: editId,
+            parent_message_id: editMsg.parent_id,
             prompt: t,
+            thinking_enabled: editMsg.thinking_enabled,
+            // model_type: editMsg.model
+            // 不知道为什么，传了会出问题，待进一步测试
           },
           (ev) => {
             for (const op of parser.parse(ev)) {
