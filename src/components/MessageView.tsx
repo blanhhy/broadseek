@@ -6,7 +6,7 @@ import { createPortal } from 'react-dom';
 import type { NormalizedMessage } from '../core/api/types';
 import { buildIndex, branchSiblings, switchBranchPath, activePathOf } from '../core/api/tree';
 import { regenerateMessage, fetchHistory, normalizeMessage, enrichMessageFiles, ApiError } from '../core/api/client';
-import { DeltaParser, nextTempId } from '../core/api/delta';
+import { DeltaParser, FragmentTracker, nextTempId } from '../core/api/delta';
 import { useConversation } from '../core/store';
 import Markdown from './Markdown';
 import FileAttachments from './FileAttachments';
@@ -571,6 +571,10 @@ const MessageView = forwardRef<MessageViewHandle, Props>(function MessageView(
 
     try {
       const parser = new DeltaParser();
+      // 视觉会话的 regenerate 走 fragments 流格式（见 client.ts sseHeaders），
+      // 非视觉会话仍可能是 delta 格式，故两种都解析：先喂给 FragmentTracker，
+      // 一旦它命中（active）即按 fragments 重组，否则回退到 delta 字段。
+      const frag = new FragmentTracker();
       let seenThink = false;
       let thinkContent = '';
       let thinkElapsed: number | null = null;
@@ -597,6 +601,19 @@ const MessageView = forwardRef<MessageViewHandle, Props>(function MessageView(
         },
         (ev) => {
           for (const op of parser.parse(ev)) {
+            frag.apply(op.path, op.op, op.value);
+            if (frag.active) {
+              bodyContent = frag.content;
+              if (frag.thinking) {
+                seenThink = true;
+                thinkContent = frag.thinking;
+              }
+              if (frag.elapsedSecs != null) {
+                seenThink = true;
+                thinkElapsed = frag.elapsedSecs;
+              }
+              continue;
+            }
             const p = op.path;
             const v = op.value;
             if (p === 'response/thinking_content') {
@@ -616,7 +633,13 @@ const MessageView = forwardRef<MessageViewHandle, Props>(function MessageView(
           applyStream();
         },
       );
-      await refreshFromServer();
+      // 流式成功后与服务器同步数据：同步失败不当作"重新生成失败"回滚，
+      // 保留乐观流式内容；仅记录日志（避免生成成功后误弹失败 Toast）
+      try {
+        await refreshFromServer();
+      } catch (syncErr) {
+        console.error('重新生成流式结束，但会话同步失败（保留乐观内容）', syncErr);
+      }
     } catch (e: any) {
       console.error('重新生成失败', e);
       useConversation.setState((s) => ({

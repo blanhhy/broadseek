@@ -450,7 +450,16 @@ export async function sendCompletion(
   signal?: AbortSignal,
 ): Promise<void> {
   const powHeader = await withPow('/api/v0/chat/completion');
-  const headers = sseHeaders(powHeader);
+  // 注意：completion/edit 保持无 x-client-version/locale/bundle 头。
+  // 这些头会让服务端把流切成 fragments 格式（我们的 DeltaParser 不认），
+  // 只有 regenerate（vision 会话解锁需要）才走 sseHeaders。
+  const headers: Record<string, string> = {
+    'Content-Type': 'application/json',
+    'User-Agent': navigator.userAgent,
+    'X-App-Version': '2025.04.25',
+    'X-Ds-Pow-Response': powHeader,
+    Authorization: `Bearer ${_token}`,
+  };
   // completion 必填字段：缺失任一会被服务端以 HTTP 422 拒绝，这里补全默认值（调用方可覆盖）
   const fullBody = {
     model_type: 'default',
@@ -478,7 +487,14 @@ export async function editMessage(
   signal?: AbortSignal,
 ): Promise<void> {
   const powHeader = await withPow('/api/v0/chat/edit_message');
-  const headers = sseHeaders(powHeader);
+  // 与 sendCompletion 一致：不带 x-client-version/locale/bundle，保持 delta 流格式
+  const headers: Record<string, string> = {
+    'Content-Type': 'application/json',
+    'User-Agent': navigator.userAgent,
+    'X-App-Version': '2025.04.25',
+    'X-Ds-Pow-Response': powHeader,
+    Authorization: `Bearer ${_token}`,
+  };
   const fullBody = {
     thinking_enabled: true,
     search_enabled: true,
@@ -568,10 +584,11 @@ export async function regenerateMessage(
   await streamSse(`${BASE}/chat/regenerate`, headers, fullBody, onEvent, signal);
 }
 
-// SSE 流式请求的公共头（completion / edit_message / regenerate）。
-// 必须带客户端标识头 x-client-*（对齐官方 web 端 2.3.0）：
+// regenerate 专用请求头：带客户端标识 x-client-*（对齐官方 web 端 2.3.0）。
 // 服务端对带图片附件的会话（vision 模型）会校验客户端身份，缺这些头时
 // /chat/regenerate 会被以 "ban regenerate" 拒绝。
+// 代价：这些头会让流切成 fragments 格式，需配合 FragmentTracker 解析
+//（completion / edit_message 保持无这些头 → delta 格式，见 sendCompletion）。
 function sseHeaders(powHeader: string): Record<string, string> {
   return {
     'Content-Type': 'application/json',
