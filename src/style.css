@@ -266,7 +266,7 @@ textarea { font: inherit; resize: none; }
 
 /* ── 会话列表（左） ── */
 .conv-list { display: flex; flex-direction: column; height: 100%; }
-.conv-scroll { flex: 1; overflow-y: auto; padding: 0 8px 12px; position: relative; will-change: transform; }
+.conv-scroll { flex: 1; overflow-y: auto; padding: 0 10px 12px; position: relative; will-change: transform; }
 /* 下拉刷新指示器：absolute 脱离文档流（不撑开列表空白），
    默认上移裁切隐藏；下拉时由 JS 同步 translateY 露出 */
 .conv-ptr {
@@ -294,7 +294,7 @@ textarea { font: inherit; resize: none; }
   position: sticky;
   top: 0;
   z-index: 3;
-  padding: 3px 12px;
+  padding: 3px 12px 1px;
   font-size: 12px;
   color: var(--text-faint);
   /* 钉住时遮挡下方滚过的会话项 */
@@ -313,7 +313,7 @@ textarea { font: inherit; resize: none; }
   pointer-events: none;
 }
 .conv-item {
-  padding: 8px 12px;
+  padding: 9px 12px;
   border-radius: 15px;
   cursor: pointer;
   /* 列表项间微小空隙：分组标题下边缘与首个卡片留出距离，
