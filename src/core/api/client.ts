@@ -554,14 +554,17 @@ export interface EditFallbackBody {
   prompt: string;
   search_enabled?: boolean;
   thinking_enabled?: boolean;
+  /** 会话当前模型；不传时 sendCompletion 兜底为 'default'，会丢失会话模型 */
+  model_type?: string;
 }
 
 export async function editMessageFallback(
   body: EditFallbackBody,
   onEvent: (obj: Record<string, any>) => void,
   signal?: AbortSignal,
+  opts?: StreamOpts,
 ): Promise<void> {
-  const { chat_session_id, parent_message_id, prompt, search_enabled, thinking_enabled } = body;
+  const { chat_session_id, parent_message_id, prompt, search_enabled, thinking_enabled, model_type } = body;
   await sendCompletion(
     {
       chat_session_id,
@@ -569,9 +572,11 @@ export async function editMessageFallback(
       prompt,
       search_enabled,
       thinking_enabled,
+      model_type,
     },
     onEvent,
     signal,
+    opts,
   );
 }
 
