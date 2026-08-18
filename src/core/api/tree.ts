@@ -144,8 +144,11 @@ export function branchSiblings(
   messageId: number,
 ): { siblings: NormalizedMessage[]; index: number } {
   const m = idx.byId.get(messageId);
-  if (!m || m.parent_id === null) return { siblings: [], index: -1 };
-  const siblings = idx.childrenOf.get(m.parent_id) ?? [];
+  if (!m) return { siblings: [], index: -1 };
+  // 根消息（parent_id 为 null）的兄弟取根列表，与 buildTree 的 siblingCount 一致
+  const siblings = m.parent_id !== null
+    ? (idx.childrenOf.get(m.parent_id) ?? [])
+    : idx.roots;
   const index = siblings.findIndex((s) => s.id === messageId);
   return { siblings, index };
 }

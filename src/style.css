@@ -31,7 +31,12 @@
   --dialog-bg: #ffffff;
   /* 编辑模式蒙版：半透明遮住对话区，露出输入框与被编辑气泡 */
   --edit-mask: rgba(255, 255, 255, 0.6);
-  font: 16px/1.55 system-ui, 'Segoe UI', Roboto, -apple-system, sans-serif;
+  /* 字体栈显式列出带粗体字面的 CJK 字体：安卓端 system-ui 的中文走隐式回退，
+     那条路径不套用 font-weight（粗体失效），命名匹配后中文粗体才生效 */
+  font: 16px/1.55 system-ui, -apple-system, 'Segoe UI', Roboto,
+    'Noto Sans SC', 'Noto Sans CJK SC', 'Source Han Sans SC',
+    'HarmonyOS Sans SC', 'MiSans', 'PingFang SC',
+    'Microsoft YaHei UI', 'Microsoft YaHei', sans-serif;
   color-scheme: light;
   color: var(--text);
   background: var(--bg);
@@ -77,7 +82,10 @@
   }
 }
 
-* { box-sizing: border-box; }
+* { 
+  box-sizing: border-box;
+  font-synthesis: none;
+}
 
 /* 默认禁止选中文本：界面 UI 文本（顶栏/侧栏/按钮/标签等）长按不应出现选择；
    对话消息内容（含思考内容）单独恢复可选，见 .msg-content / .thinking-body */
