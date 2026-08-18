@@ -76,14 +76,11 @@ export default function InputBar({ sessionId }: Props) {
     ? conv.activePath[conv.activePath.length - 1]
     : null;
 
-  // 视觉会话判定：会话内任一消息带图片文件即为视觉会话。
-  // 服务端对视觉会话的 completion/edit 校验客户端身份（缺 x-client-* 头会被拒），
-  // 需带 sseHeaders（→ fragments 流格式）；普通文本会话保持 delta。见 client.ts StreamOpts。
-  const isVision = conv.messages.some((m) =>
-    (m.files ?? []).some(
-      (f) => f.is_image === true || String(f.content_type ?? '').startsWith('image/'),
-    ),
-  );
+  // 视觉会话判定：以会话模型类型为准（chat_session.model_type === 'vision'）。
+  // 不能用"会话含图片"判断——非视觉模型（default/OCR）也能发图片，但那不是视觉模型会话。
+  // 服务端对 vision 模型的 completion/edit 校验客户端身份（缺 x-client-* 头会被拒），
+  // 需带 sseHeaders（→ fragments 流格式）；default 会话保持 delta。见 client.ts StreamOpts。
+  const isVision = conv.session?.model_type === 'vision';
 
   const refresh = async () => {
     const data = await fetchHistory(sessionId);
