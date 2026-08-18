@@ -28,6 +28,11 @@ export interface DsSseEvent {
   message?: string;
 }
 
+// 原生应用生命周期事件（DsBridgePlugin 通过 Activity 生命周期回传）
+export interface DsAppStateEvent {
+  isActive: boolean;
+}
+
 export interface DsBridgePlugin extends Plugin {
   request(options: DsRequestOptions): Promise<DsResponse>;
   requestBinary(options: DsRequestOptions): Promise<{
@@ -38,10 +43,8 @@ export interface DsBridgePlugin extends Plugin {
   }>;
   startSse(options: DsRequestOptions & { key: string }): Promise<void>;
   stopSse(options: { key: string }): Promise<void>;
-  addListener(
-    eventName: 'sseEvent',
-    listener: (event: DsSseEvent) => void,
-  ): Promise<PluginListenerHandle>;
+  addListener(eventName: 'sseEvent', listener: (event: DsSseEvent) => void): Promise<PluginListenerHandle>;
+  addListener(eventName: 'appState', listener: (event: DsAppStateEvent) => void): Promise<PluginListenerHandle>;
 }
 
 // 仅原生环境注册（web 环境该插件不存在，走回退逻辑）

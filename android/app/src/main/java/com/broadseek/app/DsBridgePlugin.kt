@@ -1,5 +1,8 @@
 package com.broadseek.app
 
+import android.app.Activity
+import android.app.Application
+import android.os.Bundle
 import android.util.Log
 import com.getcapacitor.JSObject
 import com.getcapacitor.Plugin
@@ -43,6 +46,31 @@ class DsBridgePlugin : Plugin() {
 
     companion object {
         private const val TAG = "DsBridge"
+    }
+
+    /**
+     * 插件加载时注册 Activity 生命周期监听：
+     * 应用回前台/退后台时通过 appState 事件通知 JS（对齐 @capacitor/app 的 appStateChange），
+     * 供聊天页「回到前台异步同步会话数据 + 恢复其他端仍在生成的 WIP 消息流」使用。
+     */
+    override fun load() {
+        super.load()
+        val app = bridge?.activity?.application ?: return
+        app.registerActivityLifecycleCallbacks(object : Application.ActivityLifecycleCallbacks {
+            override fun onActivityResumed(activity: Activity) {
+                if (activity === bridge?.activity) notifyListeners("appState", JSObject().put("isActive", true))
+            }
+
+            override fun onActivityPaused(activity: Activity) {
+                if (activity === bridge?.activity) notifyListeners("appState", JSObject().put("isActive", false))
+            }
+
+            override fun onActivityStarted(activity: Activity) {}
+            override fun onActivityStopped(activity: Activity) {}
+            override fun onActivityCreated(activity: Activity, savedInstanceState: Bundle?) {}
+            override fun onActivityDestroyed(activity: Activity) {}
+            override fun onActivitySaveInstanceState(activity: Activity, outState: Bundle) {}
+        })
     }
 
     private fun buildRequest(method: String, url: String, headers: Map<String, String>?, body: String?): Request {
@@ -191,7 +219,22 @@ class DsBridgePlugin : Plugin() {
                         activeSse.remove(key)
                         return
                     }
-                    parseSse(response.body?.source(), key, call)
+                    val ctype = response.header("content-type") ?: ""
+                    if (ctype.contains("text/event-stream")) {
+                        parseSse(response.body?.source(), key, call)
+                    } else {
+                        // 非 SSE 响应（如 resume_stream 命中"消息已完整"返回 JSON 封套）：
+                        // 整包作为单条 data 事件回传，由 JS 侧统一解析；正常流式不受影响
+                        val body = response.body?.string() ?: ""
+                        if (body.isNotEmpty()) {
+                            val ev = JSObject()
+                            ev.put("type", "data")
+                            ev.put("key", key)
+                            ev.put("payload", body)
+                            notifyListeners("sseEvent", ev)
+                        }
+                        finishSse(key, call)
+                    }
                 } catch (e: Exception) {
                     val ev = JSObject()
                     ev.put("type", "error")

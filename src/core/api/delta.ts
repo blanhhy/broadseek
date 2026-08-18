@@ -1,5 +1,9 @@
 // 官方 completion SSE 增量解析（操作符格式，p/o 跨事件持久化）
-// 参考 raw-api-reference.md 的 DeltaParser
+// 参考 raw-api-reference.md 的 DeltaParser。
+// 对齐官方 bT 类：
+//  - op/path 跨事件持久化（event.o ?? 上一 op，event.p ?? 上一 path）
+//  - BATCH 子项用「新解析器实例」解析（官方 new bT），避免子项缺省 o 时
+//    继承外层 BATCH op 导致把字符串当数组迭代（event.v is not iterable）
 export class DeltaParser {
   private op = 'SET';
   private path = '';
@@ -7,9 +11,11 @@ export class DeltaParser {
     let op = this.op = event.o ?? this.op;
     let path = this.path = event.p ?? this.path;
     if (op !== 'BATCH') return [{ path, op, value: event.v }];
+    // BATCH：子项用独立解析器逐项解析，再拼上外层路径前缀
+    const sub = new DeltaParser();
     const results: { path: string; op: string; value: any }[] = [];
     for (const item of event.v) {
-      for (const s of this.parse(item)) {
+      for (const s of sub.parse(item)) {
         s.path = (path ? path + '/' : '') + s.path;
         results.push(s);
       }

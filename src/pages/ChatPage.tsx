@@ -1,9 +1,18 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useCallback, useRef, useState } from 'react';
 import { useAuth, useConversation } from '../core/store';
-import { enrichMessageFiles, fetchAllSessions, fetchHistory, normalizeMessage } from '../core/api/client';
+import {
+  enrichMessageFiles,
+  fetchAllSessions,
+  fetchHistory,
+  normalizeMessage,
+  resumeMessage,
+  isNativeRuntime,
+} from '../core/api/client';
+import { DsBridge } from '../core/api/nativeBridge';
 import { loadSessionListCache, saveSessionListCache } from '../core/api/sessionCache';
-import type { ChatSession } from '../core/api/types';
+import type { ChatSession, NormalizedMessage } from '../core/api/types';
 import { buildIndex, activePathOf } from '../core/api/tree';
+import { DeltaParser, FragmentTracker } from '../core/api/delta';
 import ConversationList from '../components/ConversationList';
 import BranchDrawer from '../components/BranchDrawer';
 import MessageView, { type MessageViewHandle } from '../components/MessageView';
@@ -294,17 +303,12 @@ export default function ChatPage() {
     };
   }, []);
 
-  // 回到未选择状态：清空当前会话数据（会话被删除时使用）
-  const resetConversation = () => {
-    conv.setData({ session: null, messages: [], activePath: [], currentMessageId: null });
-    conv.setConversation(null);
-  };
-
   // 加载会话列表
   //  - preferCache=true（启动）：先渲染本地缓存秒开，再后台拉取同步；失败静默保留缓存
   //  - preferCache=false（下拉刷新/删除/重命名后）：直接拉取最新，立即生效
+  //  - silent=true（回前台后台同步）：失败不弹日志，避免打扰
   // 拉取成功后检测：当前打开的会话已不在列表（其他端删除）→ 回到未选择状态
-  const loadSessions = async (preferCache = false) => {
+  const loadSessions = async (preferCache = false, silent = false) => {
     if (preferCache) {
       const cached = loadSessionListCache(token);
       if (cached && cached.sessions.length > 0) setSessions(cached.sessions);
@@ -313,11 +317,16 @@ export default function ChatPage() {
       const d = await fetchAllSessions({ count: 100 });
       saveSessionListCache(token, d);
       setSessions(d);
-      if (conv.sessionId && !d.some((s) => s.id === conv.sessionId)) {
-        resetConversation();
+      // 用 getState 读取最新会话（该函数可能经稳定闭包调用，避免陈旧引用）：
+      // 当前打开的会话已不在列表（其他端删除）→ 回到未选择状态
+      const curId = useConversation.getState().sessionId;
+      if (curId && !d.some((s) => s.id === curId)) {
+        const st = useConversation.getState();
+        st.setData({ session: null, messages: [], activePath: [], currentMessageId: null });
+        st.setConversation(null);
       }
     } catch (e) {
-      if (!preferCache) console.error('加载会话失败', e);
+      if (!silent && !preferCache) console.error('加载会话失败', e);
       // preferCache 失败：保留缓存渲染（本地优先，异步同步失败静默）
     }
   };
@@ -374,6 +383,8 @@ export default function ChatPage() {
       sessionCache.set(id, payload);
       if (seq !== reqSeq.current) return;
       conv.setData(payload);
+      // 打开会话时若存在其他端仍在生成（WIP）的消息，自动续流（对齐官方 resumeLatestMessageAsNeed）
+      void resumeWipMessages(id, messages);
 
       // 后台补全文件描述符（signed_path），完成后原地刷新；失败/超时不影响消息展示
       void enrichMessageFiles(data.chat_messages)
@@ -402,6 +413,213 @@ export default function ChatPage() {
       }
     }
   };
+
+  // ── 恢复其他端仍在生成（WIP）的消息流（对齐官方 resumeLatestMessageAsNeed）──
+  // 官方机制：fetchHistory 成功后，对会话内 status=WIP 的 AI 消息调用 /chat/resume_stream 续流，
+  // SSE 增量原地更新该消息；若消息已在其他端生成完毕，服务端返回完整消息（full_message）直接替换。
+  const resumeWipMessage = useCallback(async (sid: string, wip: NormalizedMessage) => {
+    const parser = new DeltaParser();
+    const frag = new FragmentTracker();
+    // 基准策略（实测续流流从服务端当前状态「完整重放」：快照/首个 APPEND 即全文基准）：
+    //  - 快照/SET 直接覆盖（服务端当前状态）
+    //  - 首个 APPEND 以该块为基准（丢弃历史内容，避免与重放叠加）
+    //  - 后续 APPEND 继续追加
+    // 历史内容仅作为流事件到达前的初始显示（首个 APPEND/快照到达后即被流基准取代）。
+    let seenThink = !!wip.thinking;
+    let thinkContent = wip.thinking?.content ?? '';
+    let thinkElapsed: number | null = wip.thinking?.elapsed_secs ?? null;
+    let bodyContent = wip.content ?? '';
+    let thinkBased = false; // thinking 是否已由流确立基准（快照/SET/首个 APPEND）
+    let bodyBased = false; // content 是否已由流确立基准
+    let status = wip.status;
+    const update = () => {
+      useConversation.setState((s) => ({
+        messages: s.messages.map((x) =>
+          x.id === wip.id
+            ? {
+                ...x,
+                content: bodyContent,
+                thinking: seenThink ? { content: thinkContent, elapsed_secs: thinkElapsed } : null,
+                status,
+              }
+            : x,
+        ),
+      }));
+    };
+    try {
+      await resumeMessage(
+        { chat_session_id: sid, message_id: wip.id },
+        (ev) => {
+          if (ev.type === 'full_message') {
+            // 其他端已生成完：直接以完整消息替换本地占位
+            if (ev.message) {
+              useConversation.setState((s) => ({
+                messages: s.messages.map((x) =>
+                  x.id === wip.id ? { ...x, ...normalizeMessage(ev.message) } : x,
+                ),
+              }));
+            }
+            return;
+          }
+          for (const op of parser.parse(ev)) {
+            frag.apply(op.path, op.op, op.value);
+            if (frag.active) {
+              bodyContent = frag.content;
+              if (frag.thinking) { seenThink = true; thinkContent = frag.thinking; }
+              if (frag.elapsedSecs != null) { seenThink = true; thinkElapsed = frag.elapsedSecs; }
+              bodyBased = true;
+              thinkBased = true;
+              continue;
+            }
+            const p = op.path;
+            const v = op.value;
+            // 快照事件（无路径、值为 response 对象）：以服务端当前状态为内容基准
+            if (!p && v && typeof v === 'object' && (v as any).response) {
+              const r = (v as any).response;
+              if (typeof r.content === 'string') { bodyContent = r.content; bodyBased = true; }
+              if (typeof r.thinking_content === 'string') { seenThink = true; thinkContent = r.thinking_content; thinkBased = true; }
+              if (typeof r.status === 'string') status = r.status;
+              if (typeof r.thinking_elapsed_secs === 'number') { seenThink = true; thinkElapsed = r.thinking_elapsed_secs; }
+              continue;
+            }
+            if (p === 'response/status' && typeof v === 'string') {
+              status = v;
+            } else if (p === 'response/thinking_content') {
+              if (typeof v === 'string') {
+                seenThink = true;
+                // 首个 APPEND（未确立基准）即重放的全文起点，直接覆盖历史兜底
+                thinkContent = op.op === 'SET' || !thinkBased ? v : thinkContent + v;
+                thinkBased = true;
+              }
+            } else if (p === 'response/thinking_elapsed_secs' && typeof v === 'number') {
+              seenThink = true;
+              thinkElapsed = v;
+            } else if (p === 'response/content') {
+              if (typeof v === 'string') {
+                bodyContent = op.op === 'SET' || !bodyBased ? v : bodyContent + v;
+                bodyBased = true;
+              }
+            }
+          }
+          update();
+        },
+        undefined,
+        { vision: useConversation.getState().session?.model_type === 'vision' },
+      );
+    } catch (e) {
+      // 恢复失败（可续流窗口已过/消息不存在/网络）→ 保留历史内容，静默
+      console.error('恢复流式生成失败', e);
+    }
+  }, []);
+
+  // 恢复会话内全部 WIP 消息（openSession / 回前台同步共用）
+  const resumeWipMessages = useCallback(async (sid: string, msgs: NormalizedMessage[]) => {
+    const wip = msgs.filter((m) => m.role === 'ASSISTANT' && m.status === 'WIP');
+    if (!wip.length) return;
+    useConversation.getState().setStreaming(true);
+    try {
+      for (const m of wip) await resumeWipMessage(sid, m);
+    } finally {
+      useConversation.getState().setStreaming(false);
+    }
+  }, [resumeWipMessage]);
+
+  // ── 回前台异步同步当前会话（对齐官方：后台期间其他端产生的新消息 / 进行中的 WIP 流）──
+  const syncingRef = useRef(false);
+  const syncSessionData = useCallback(async (sid: string) => {
+    // 判断是否值得 setData（方向性比较，避免无谓的整体重渲染）：
+    //  - 消息数变化 / id、status、content、thinking 变化 → 应用
+    //  - 文件签名（signed_path/url）变多（富化补全）→ 应用
+    //  - 新拉取的裁剪版文件（缺 signed_path）不会覆盖已富化的同内容消息
+    const sigCount = (ms: NormalizedMessage[]) =>
+      (ms ?? []).reduce((n, m) => n + (m.files ?? []).filter((f) => !!((f as any).signed_path ?? (f as any).url)).length, 0);
+    const needsApply = (list: NormalizedMessage[]): boolean => {
+      const cur = useConversation.getState().messages;
+      if (cur.length !== list.length) return true;
+      const curBy = new Map(cur.map((m) => [m.id, m]));
+      for (const a of list) {
+        const b = curBy.get(a.id);
+        if (!b) return true;
+        if (a.status !== b.status || a.content !== b.content) return true;
+        if ((a.thinking?.content ?? '') !== (b.thinking?.content ?? '')) return true;
+        if (sigCount([a]) > sigCount([b])) return true;
+      }
+      return false;
+    };
+    try {
+      const data = await fetchHistory(sid);
+      if (useConversation.getState().sessionId !== sid) return;
+      const msgs = data.chat_messages.map(normalizeMessage);
+      const apply = (list: NormalizedMessage[], session: ChatSession, currentId: number | null) => {
+        const idx = buildIndex(list);
+        const payload: SessionCache = {
+          session,
+          messages: list,
+          activePath: activePathOf(idx, currentId),
+          currentMessageId: currentId,
+        };
+        sessionCache.set(sid, payload);
+        const st = useConversation.getState();
+        if (st.sessionId === sid && needsApply(list)) st.setData(payload);
+      };
+      apply(msgs, data.chat_session, data.chat_session.current_message_id);
+      // 后台富化文件签名（不阻塞同步）
+      void enrichMessageFiles(data.chat_messages)
+        .then((enriched) => {
+          if (useConversation.getState().sessionId !== sid) return;
+          apply(enriched.map(normalizeMessage), data.chat_session, data.chat_session.current_message_id);
+        })
+        .catch(() => {});
+      // 恢复仍在生成（WIP）的消息流；续流结束后再与服务端对账一次，落定最终状态/内容
+      const wip = msgs.filter((m) => m.role === 'ASSISTANT' && m.status === 'WIP');
+      if (wip.length) {
+        await resumeWipMessages(sid, wip);
+        if (useConversation.getState().sessionId !== sid) return;
+        const final = await fetchHistory(sid);
+        if (useConversation.getState().sessionId !== sid) return;
+        const finalMsgs = final.chat_messages.map(normalizeMessage);
+        apply(finalMsgs, final.chat_session, final.chat_session.current_message_id);
+      }
+    } catch (e) {
+      // 后台同步失败静默（不影响当前界面）
+      console.error('回前台同步会话失败', e);
+    }
+  }, [resumeWipMessages]);
+
+  const syncOnForeground = useCallback(() => {
+    // 已有本端流式在跑（发送/编辑/重新生成）或同步进行中 → 跳过，避免打断/重复
+    if (syncingRef.current || useConversation.getState().streaming) return;
+    const sid = useConversation.getState().sessionId;
+    if (!sid) return;
+    syncingRef.current = true;
+    void syncSessionData(sid).finally(() => {
+      syncingRef.current = false;
+    });
+    // 会话列表后台同步（静默失败）
+    void loadSessions(false, true);
+  }, [syncSessionData]);
+
+  // 前台监听：浏览器 visibilitychange/pageshow + 原生 Activity 生命周期（appState）
+  useEffect(() => {
+    const onVisible = () => {
+      if (document.visibilityState === 'visible') syncOnForeground();
+    };
+    document.addEventListener('visibilitychange', onVisible);
+    window.addEventListener('pageshow', onVisible);
+    let appHandle: { remove: () => void } | null = null;
+    if (isNativeRuntime()) {
+      void DsBridge.addListener('appState', (ev) => {
+        if (ev.isActive) syncOnForeground();
+      }).then((h) => {
+        appHandle = h;
+      });
+    }
+    return () => {
+      document.removeEventListener('visibilitychange', onVisible);
+      window.removeEventListener('pageshow', onVisible);
+      appHandle?.remove();
+    };
+  }, [syncOnForeground]);
 
   const isOpen = !!conv.sessionId;
 

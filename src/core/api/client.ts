@@ -485,15 +485,7 @@ export async function sendCompletion(
 ): Promise<void> {
   const powHeader = await withPow('/api/v0/chat/completion');
   // 视觉会话走 sseHeaders（解锁 + fragments 格式）；普通会话保持无 x-client 头 → delta 流
-  const headers: Record<string, string> = opts?.vision
-    ? sseHeaders(powHeader)
-    : {
-        'Content-Type': 'application/json',
-        'User-Agent': navigator.userAgent,
-        'X-App-Version': '2025.04.25',
-        'X-Ds-Pow-Response': powHeader,
-        Authorization: `Bearer ${_token}`,
-      };
+  const headers: Record<string, string> = opts?.vision ? sseHeaders(powHeader) : plainStreamHeaders(powHeader);
   // completion 必填字段：缺失任一会被服务端以 HTTP 422 拒绝，这里补全默认值（调用方可覆盖）
   const fullBody = {
     model_type: 'default',
@@ -523,15 +515,7 @@ export async function editMessage(
 ): Promise<void> {
   const powHeader = await withPow('/api/v0/chat/edit_message');
   // 与 sendCompletion 一致：视觉会话走 sseHeaders（fragments），普通会话保持 delta
-  const headers: Record<string, string> = opts?.vision
-    ? sseHeaders(powHeader)
-    : {
-        'Content-Type': 'application/json',
-        'User-Agent': navigator.userAgent,
-        'X-App-Version': '2025.04.25',
-        'X-Ds-Pow-Response': powHeader,
-        Authorization: `Bearer ${_token}`,
-      };
+  const headers: Record<string, string> = opts?.vision ? sseHeaders(powHeader) : plainStreamHeaders(powHeader);
   const fullBody = {
     thinking_enabled: true,
     search_enabled: true,
@@ -621,6 +605,68 @@ export async function regenerateMessage(
   await streamSse(`${BASE}/chat/regenerate`, headers, fullBody, onEvent, signal);
 }
 
+// 恢复仍在生成（WIP）的 AI 消息（官方 /chat/resume_stream，对齐 web 端 resumeLatestMessageAsNeed）。
+//
+// 触发时机：fetchHistory 成功后，对会话内 status=WIP 的消息自动调用续流，用于
+// 「后台期间其他端继续生成」的场景——回到前台同步历史时能接上未完成的流式渲染。
+//
+// 请求体仅 {chat_session_id, message_id}（对齐官方 ChatResumeStreamRequest）。
+// 响应有两种形态：
+//  - 仍在流式中 → 与 completion 一致的 SSE（delta；视觉会话带 x-client 头时为 fragments）
+//  - 已在其他端生成完毕 → 非流式 JSON 封套 data.biz_code=22（RESUME_MESSAGE_GOT_FULL_MESSAGE），
+//    data.biz_data 为完整消息，以 full_message 事件交给调用方直接替换
+// 错误码 7（RESUME_MESSAGE_NOT_FOUND）/ 8（RESUME_TIME_TOO_LONG，可续流窗口已过）
+// 由调用方静默忽略，保留历史内容即可。
+export interface ResumeMessageBody {
+  chat_session_id: string;
+  message_id: number;
+}
+
+const RESUME_FULL_MESSAGE_BIZ_CODE = 22;
+
+export async function resumeMessage(
+  body: ResumeMessageBody,
+  onEvent: (obj: Record<string, any>) => void,
+  signal?: AbortSignal,
+  opts?: StreamOpts,
+): Promise<void> {
+  const powHeader = await withPow('/api/v0/chat/completion');
+  // 与 completion/edit 一致：视觉会话带完整客户端标识（fragments 流），普通会话保持 delta 流
+  const headers: Record<string, string> = opts?.vision ? sseHeaders(powHeader) : plainStreamHeaders(powHeader);
+  await streamSse(
+    `${BASE}/chat/resume_stream`,
+    headers,
+    { chat_session_id: body.chat_session_id, message_id: body.message_id },
+    onEvent,
+    signal,
+    (json) => {
+      // 非流式 JSON：消息已在其他端生成完毕，biz_data 为完整消息
+      if (
+        json &&
+        typeof json === 'object' &&
+        (json as any).data &&
+        (json as any).data.biz_code === RESUME_FULL_MESSAGE_BIZ_CODE
+      ) {
+        onEvent({ type: 'full_message', message: (json as any).data.biz_data });
+        return true;
+      }
+      return false; // 未处理 → 走统一封套校验抛错
+    },
+  );
+}
+
+// 普通文本会话（非视觉）的 SSE 请求头：不带 x-client-* 标识 → 服务端返回 delta 扁平流。
+// 与 sseHeaders 相对：视觉会话带完整客户端标识 → fragments 格式。
+function plainStreamHeaders(powHeader: string): Record<string, string> {
+  return {
+    'Content-Type': 'application/json',
+    'User-Agent': navigator.userAgent,
+    'X-App-Version': '2025.04.25',
+    'X-Ds-Pow-Response': powHeader,
+    Authorization: `Bearer ${_token}`,
+  };
+}
+
 // 视觉会话（含图片）专用请求头：带客户端标识 x-client-*（对齐官方 web 端 2.3.0）。
 // 服务端对带图片附件的会话（vision 模型）会校验客户端身份，缺这些头时
 // /chat/regenerate 会被以 "ban regenerate" 拒绝，completion / edit_message 也会被拒。
@@ -649,12 +695,13 @@ async function streamSse(
   body: Record<string, any>,
   onEvent: (obj: Record<string, any>) => void,
   signal?: AbortSignal,
+  onNonStream?: (json: any) => boolean, // 非流式 JSON 封套：返回 true 表示已处理（不再抛错）
 ): Promise<void> {
   if (isNativeRuntime()) {
-    await nativeStreamSse(url, headers, body, onEvent, signal);
+    await nativeStreamSse(url, headers, body, onEvent, signal, onNonStream);
     return;
   }
-  await fetchStreamSse(url, headers, body, onEvent, signal);
+  await fetchStreamSse(url, headers, body, onEvent, signal, onNonStream);
 }
 
 // 浏览器（dev）：用 fetch ReadableStream 逐行解析 SSE
@@ -664,6 +711,7 @@ async function fetchStreamSse(
   body: Record<string, any>,
   onEvent: (obj: Record<string, any>) => void,
   signal?: AbortSignal,
+  onNonStream?: (json: any) => boolean,
 ): Promise<void> {
   const resp = await fetch(url, {
     method: 'POST',
@@ -675,10 +723,18 @@ async function fetchStreamSse(
     throw new ApiError(`completion HTTP ${resp.status}`);
   }
   const ctype = resp.headers.get('content-type') ?? '';
-  // 服务端可能直接返回非 SSE 的 JSON 封套（如 regenerate 被拒：{code:0,data:{biz_code:4}}），
-  // 此时逐行解析会静默吞掉错误。读到完整文本后统一走封套校验。
+  // 服务端可能直接返回非 SSE 的 JSON 封套（如 regenerate 被拒：{code:0,data:{biz_code:4}}，
+  // resume_stream 命中"消息已完整"：biz_code=22），此时逐行解析会静默吞掉错误。
+  // 优先交给调用方处理（onNonStream），未处理才走统一封套校验。
   if (!ctype.includes('event-stream')) {
     const text = await resp.text();
+    if (onNonStream) {
+      try {
+        if (onNonStream(JSON.parse(text))) return;
+      } catch {
+        /* JSON 解析失败 → 交封套校验 */
+      }
+    }
     throwApiEnvelopeError(text);
     return;
   }
@@ -754,6 +810,7 @@ async function nativeStreamSse(
   body: Record<string, any>,
   onEvent: (obj: Record<string, any>) => void,
   signal?: AbortSignal,
+  onNonStream?: (json: any) => boolean,
 ): Promise<void> {
   const key = `sse-${++sseSeq}`;
   await getSseListener();
@@ -767,6 +824,9 @@ async function nativeStreamSse(
         } catch {
           return; /* 忽略坏帧 */
         }
+        // 非流式 JSON 封套（原生端整包作为单条 data 事件回传，见 DsBridgePlugin.startSse）：
+        // 先交给调用方处理（如 resume_stream 命中"消息已完整"），未处理再按普通事件走
+        if (onNonStream && onNonStream(obj)) return;
         // 服务端以 SSE 事件返回业务拒绝：{type:"error", content, finish_reason}
         if (obj && obj.type === 'error') {
           sseHandlers.delete(key);
