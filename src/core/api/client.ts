@@ -20,6 +20,10 @@ export const BASE = import.meta.env.DEV
   ? '/api/v0'
   : 'https://chat.deepseek.com/api/v0';
 
+// fetch_files 等端点要求「Web 端 UA + x-client-* 头」才返回带 signed_path 的完整文件实体；
+// 默认 request() 用 Android UA（对齐原生），这些端点需显式覆盖为 Web UA。
+const WEB_USER_AGENT = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/126 Safari/537.36';
+
 // 文件（图片）服务域名：signed_path 本身已含 "/file?file_id=...&state=..."，
 // 只需拼上该域并通过 ty=p 指定图片形态（对齐 web 端 bundle 的 ct()）。
 const FILE_IMAGE_HOST = 'https://files.deepseeksvc.com';
@@ -39,6 +43,11 @@ export function buildFileUrl(signedPath: string | null | undefined): string | nu
   return `${base}${sep}ty=p`;
 }
 
+// 原生图片内存缓存：同一 URL（signed_path 含 state 签名）只走一次 OkHttp 拉取，
+// 避免重渲染/切换分支时同一图片反复拉取转 base64。上限防内存膨胀。
+const imageCache = new Map<string, string>();
+const IMAGE_CACHE_MAX = 200;
+
 // 原生环境（Capacitor WebView）加载文件服务图片：WebView 直接 <img> 跨域会被 WAF 拦，
 // 改为走原生 OkHttp（DsBridge.requestBinary）带伪装头拉取，返回 base64 data URL；
 // 非原生环境（浏览器 dev 走代理 / 线上）直接返回 URL 交给 <img>。
@@ -46,6 +55,8 @@ export async function loadFileImage(signedPath: string | null | undefined): Prom
   const url = buildFileUrl(signedPath);
   if (!url) return null;
   if (!isNativeRuntime()) return url;
+  const hit = imageCache.get(url);
+  if (hit) return hit;
   try {
     const resp = await DsBridge.requestBinary({
       method: 'GET',
@@ -58,7 +69,10 @@ export async function loadFileImage(signedPath: string | null | undefined): Prom
       },
     });
     if (resp.status !== 200 || !resp.data) return null;
-    return `data:${resp.mimeType || 'image/webp'};base64,${resp.data}`;
+    const dataUrl = `data:${resp.mimeType || 'image/webp'};base64,${resp.data}`;
+    if (imageCache.size >= IMAGE_CACHE_MAX) imageCache.clear(); // 简单防膨胀
+    imageCache.set(url, dataUrl);
+    return dataUrl;
   } catch {
     return null;
   }
@@ -98,7 +112,7 @@ async function request<T>(
   options: {
     method?: string;
     body?: unknown;
-    query?: Record<string, string | number | undefined>;
+    query?: Record<string, string | number | undefined | string[]>;
     powHeader?: string;
     headers?: Record<string, string>;
     skipPlatform?: boolean;
@@ -108,7 +122,13 @@ async function request<T>(
   const url = new URL(BASE + path, window.location.origin);
   if (query) {
     for (const [k, v] of Object.entries(query)) {
-      if (v !== undefined) url.searchParams.set(k, String(v));
+      if (v === undefined) continue;
+      // 数组值 → 重复同名参数（如 fetch_files 的 file_ids=..&file_ids=..）
+      if (Array.isArray(v)) {
+        for (const item of v) url.searchParams.append(k, String(item));
+      } else {
+        url.searchParams.set(k, String(v));
+      }
     }
   }
 
@@ -350,11 +370,17 @@ export async function fetchFilesInfo(fileIds: string[]): Promise<ChatFile[]> {
     const data = await Promise.race([
       request<{ files?: ChatFile[] }>('/file/fetch_files', {
         method: 'GET',
-        query: { file_ids: fileIds.join(',') },
-        // fetch_files 需要新客户端标识才返回带 signed_path 的完整文件实体
+        // fetch_files 的 file_ids 是重复参数（file_ids=..&file_ids=..），不能用逗号合并（会 400）
+        query: { file_ids: fileIds },
+        // fetch_files 需要「Web UA + 完整 x-client-* 头」才返回带 signed_path/is_image 的完整实体：
+        // 实测 Android UA 或缺少 x-client-* 时 signed_path 缺失（仅 id/status/file_name 等基础字段）。
+        // 默认 request() 的 UA 是 Android，这里显式覆盖为 Web UA。
         headers: {
+          'User-Agent': WEB_USER_AGENT,
           'x-client-version': '2.3.0',
           'x-client-bundle-id': 'com.deepseek.chat',
+          'x-client-platform': 'web',
+          'x-client-locale': 'zh_CN',
         },
       }),
       timeout,

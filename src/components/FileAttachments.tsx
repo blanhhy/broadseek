@@ -85,8 +85,11 @@ function FileCard({ f }: { f: ChatFile }) {
 
 export default function FileAttachments({ files }: { files: ChatFile[] }) {
   if (!files || files.length === 0) return null;
-  const images = files.filter((f) => f.is_image);
-  const docs = files.filter((f) => !f.is_image);
+  // 用 isImgFile 分类（is_image / content_type / 扩展名兜底）——历史消息未富化时
+  // is_image 可能是 undefined，但文件名/类型足以识别图片；严格按 is_image 会把
+  // .jpg/.png 这类文件误归为文档。
+  const images = files.filter(isImgFile);
+  const docs = files.filter((f) => !isImgFile(f));
   return (
     <>
       {images.length > 0 && <FileImages files={images} />}
