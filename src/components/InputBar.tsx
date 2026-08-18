@@ -4,7 +4,7 @@ import { createPortal } from 'react-dom';
 import { sendCompletion, editMessage, fetchHistory, normalizeMessage, ApiError } from '../core/api/client';
 import { useConversation } from '../core/store';
 import { buildIndex, activePathOf } from '../core/api/tree';
-import { DeltaParser, nextTempId } from '../core/api/delta';
+import { DeltaParser, FragmentTracker, nextTempId } from '../core/api/delta';
 import type { NormalizedMessage } from '../core/api/types';
 
 interface Props {
@@ -76,6 +76,15 @@ export default function InputBar({ sessionId }: Props) {
     ? conv.activePath[conv.activePath.length - 1]
     : null;
 
+  // 视觉会话判定：会话内任一消息带图片文件即为视觉会话。
+  // 服务端对视觉会话的 completion/edit 校验客户端身份（缺 x-client-* 头会被拒），
+  // 需带 sseHeaders（→ fragments 流格式）；普通文本会话保持 delta。见 client.ts StreamOpts。
+  const isVision = conv.messages.some((m) =>
+    (m.files ?? []).some(
+      (f) => f.is_image === true || String(f.content_type ?? '').startsWith('image/'),
+    ),
+  );
+
   const refresh = async () => {
     const data = await fetchHistory(sessionId);
     const msgs = data.chat_messages.map(normalizeMessage);
@@ -140,6 +149,9 @@ export default function InputBar({ sessionId }: Props) {
 
       try {
         const parser = new DeltaParser();
+        // 视觉会话走 fragments 流格式，普通会话走 delta：先喂给 FragmentTracker，
+        // 命中（active）即按 fragments 重组，否则回退 delta（与 MessageView 一致）。
+        const frag = new FragmentTracker();
         let seenThink = false;
         let thinkContent = '';
         let thinkElapsed: number | null = null;
@@ -165,6 +177,19 @@ export default function InputBar({ sessionId }: Props) {
           },
           (ev) => {
             for (const op of parser.parse(ev)) {
+              frag.apply(op.path, op.op, op.value);
+              if (frag.active) {
+                bodyContent = frag.content;
+                if (frag.thinking) {
+                  seenThink = true;
+                  thinkContent = frag.thinking;
+                }
+                if (frag.elapsedSecs != null) {
+                  seenThink = true;
+                  thinkElapsed = frag.elapsedSecs;
+                }
+                continue;
+              }
               const p = op.path;
               const v = op.value;
               if (p === 'response/thinking_content') {
@@ -183,6 +208,8 @@ export default function InputBar({ sessionId }: Props) {
             }
             applyStream();
           },
+          undefined,
+          { vision: isVision },
         );
         await refresh();
       } catch (e: any) {
@@ -212,6 +239,8 @@ export default function InputBar({ sessionId }: Props) {
 
     try {
       const parser = new DeltaParser();
+      // 视觉会话走 fragments 流格式，普通会话走 delta：双路解析（同编辑重发）。
+      const frag = new FragmentTracker();
       // 流式状态：实际下发使用扁平路径
       //   response/thinking_content      → 思考内容（裸 {v} 事件依赖 p 跨事件持久化）
       //   response/thinking_elapsed_secs → 思考结束耗时（SET）
@@ -242,6 +271,19 @@ export default function InputBar({ sessionId }: Props) {
         },
         (ev) => {
           for (const op of parser.parse(ev)) {
+            frag.apply(op.path, op.op, op.value);
+            if (frag.active) {
+              bodyContent = frag.content;
+              if (frag.thinking) {
+                seenThink = true;
+                thinkContent = frag.thinking;
+              }
+              if (frag.elapsedSecs != null) {
+                seenThink = true;
+                thinkElapsed = frag.elapsedSecs;
+              }
+              continue;
+            }
             const p = op.path;
             const v = op.value;
             if (p === 'response/thinking_content') {
@@ -260,6 +302,8 @@ export default function InputBar({ sessionId }: Props) {
           }
           applyStream();
         },
+        undefined,
+        { vision: isVision },
       );
       await refresh(); // 成功：用服务器真实数据替换临时消息
     } catch (e: any) {
