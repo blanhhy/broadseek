@@ -1,7 +1,7 @@
 // 底部输入栏：发送消息（乐观 UI：立即在对话页追加 User，流式生成 AI，失败撤回）
 import { useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { sendCompletion, editMessage, fetchHistory, normalizeMessage, ApiError } from '../core/api/client';
+import { sendCompletion, editMessage, fetchHistory, normalizeMessage, enrichMessageFiles, ApiError } from '../core/api/client';
 import { useConversation } from '../core/store';
 import { buildIndex, activePathOf } from '../core/api/tree';
 import { DeltaParser, FragmentTracker, nextTempId } from '../core/api/delta';
@@ -84,15 +84,22 @@ export default function InputBar({ sessionId }: Props) {
 
   const refresh = async () => {
     const data = await fetchHistory(sessionId);
-    const msgs = data.chat_messages.map(normalizeMessage);
-    const idx = buildIndex(msgs);
-    const active = activePathOf(idx, data.chat_session.current_message_id);
-    conv.setData({
-      session: data.chat_session,
-      messages: msgs,
-      activePath: active,
-      currentMessageId: data.chat_session.current_message_id,
-    });
+    const apply = (msgs: NormalizedMessage[]) => {
+      const idx = buildIndex(msgs);
+      const active = activePathOf(idx, data.chat_session.current_message_id);
+      conv.setData({
+        session: data.chat_session,
+        messages: msgs,
+        activePath: active,
+        currentMessageId: data.chat_session.current_message_id,
+      });
+    };
+    // 先渲染，再后台富化文件签名（signed_path）——否则历史里文件是裁剪版（缺 signed_path），
+    // 发送/编辑后重新拉取的图片消息会丢掉预览（首次打开/重新生成走富化路径所以有预览）。
+    apply(data.chat_messages.map(normalizeMessage));
+    void enrichMessageFiles(data.chat_messages)
+      .then((enriched) => apply(enriched.map(normalizeMessage)))
+      .catch(() => {});
   };
 
   const send = async () => {
