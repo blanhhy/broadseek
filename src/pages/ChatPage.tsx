@@ -325,6 +325,15 @@ export default function ChatPage() {
         st.setData({ session: null, messages: [], activePath: [], currentMessageId: null });
         st.setConversation(null);
       }
+      // 当前打开的会话仍在列表 → 同步其展示字段（标题/置顶/更新时间）。
+      // 重命名等操作只刷新了会话列表，若不同步，对话页顶部标题与列表会不一致。
+      useConversation.setState((s) => {
+        if (!s.session || s.sessionId !== curId) return {};
+        const updated = d.find((x) => x.id === curId);
+        if (!updated) return {};
+        if (updated.title === s.session.title && updated.pinned === s.session.pinned) return {};
+        return { session: { ...s.session, title: updated.title, pinned: updated.pinned, updated_at: updated.updated_at } };
+      });
     } catch (e) {
       if (!silent && !preferCache) console.error('加载会话失败', e);
       // preferCache 失败：保留缓存渲染（本地优先，异步同步失败静默）

@@ -84,7 +84,11 @@ export default function InputBar({ sessionId }: Props) {
 
   const refresh = async () => {
     const data = await fetchHistory(sessionId);
+    // 流式期间可能已切换到别的会话（组件实例复用，本闭包仍持有旧 sessionId）：
+    // 若当前打开的会话已不是发起时的会话，丢弃这次刷新，避免把旧会话数据覆盖到新会话上。
+    if (useConversation.getState().sessionId !== sessionId) return;
     const apply = (msgs: NormalizedMessage[]) => {
+      if (useConversation.getState().sessionId !== sessionId) return;
       const idx = buildIndex(msgs);
       const active = activePathOf(idx, data.chat_session.current_message_id);
       conv.setData({
