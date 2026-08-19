@@ -169,7 +169,15 @@ textarea { font: inherit; resize: none; }
   flex-direction: column;
   background: var(--bg);
   position: relative;
+  /* overflow-x: clip：彻底禁止横向滚动（overflow:hidden 仍可被 scrollIntoView/聚焦横向滚动）。
+     抽屉是 absolute 溢出子元素，导致 app-shell scrollWidth>clientWidth，
+     点击/聚焦视口外元素时浏览器会横向滚动 app-shell 把抽屉内容"滚进"视口，
+     造成抽屉假打开、主区左移。clip 后该容器不再是滚动容器，scrollIntoView 会跳过它。
+     注意：x/y 两轴必须同为 clip，否则按 CSS 规范 clip 会被计算成 hidden（无效）。
+     overflow: hidden 先行声明作 fallback（不支持 clip 的老浏览器保持 hidden）。 */
   overflow: hidden;
+  overflow-x: clip;
+  overflow-y: clip;
 }
 
 .topbar {
