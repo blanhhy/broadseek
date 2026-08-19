@@ -484,8 +484,11 @@ export async function sendCompletion(
   opts?: StreamOpts,
 ): Promise<void> {
   const powHeader = await withPow('/api/v0/chat/completion');
-  // 视觉会话走 sseHeaders（解锁 + fragments 格式）；普通会话保持无 x-client 头 → delta 流
-  const headers: Record<string, string> = opts?.vision ? sseHeaders(powHeader) : plainStreamHeaders(powHeader);
+  // 视觉会话走 sseHeaders（解锁 + fragments 格式）；普通会话保持无 x-client 头 → delta 流。
+  // expert 等需服务端版本门控的会话也走 sseHeaders：服务端对 expert 校验客户端版本
+  //（缺 x-client-version 时返回"Update to the latest version to use Expert"），须带完整客户端标识。
+  const needsIdentity = opts?.vision || body.model_type === 'expert';
+  const headers: Record<string, string> = needsIdentity ? sseHeaders(powHeader) : plainStreamHeaders(powHeader);
   // completion 必填字段：缺失任一会被服务端以 HTTP 422 拒绝，这里补全默认值（调用方可覆盖）
   const fullBody = {
     model_type: 'default',
@@ -505,6 +508,9 @@ export interface EditMessageBody {
   prompt: string;
   search_enabled?: boolean;
   thinking_enabled?: boolean;
+  /** 会话模型类型。一个会话内模型类型需保持不变；缺省时服务端按会话自身模型处理，
+      但 expert 等特殊会话若传错/不传可能导致编辑失败，需与普通发送保持一致地显式传递。 */
+  model_type?: string;
 }
 
 export async function editMessage(
@@ -514,8 +520,10 @@ export async function editMessage(
   opts?: StreamOpts,
 ): Promise<void> {
   const powHeader = await withPow('/api/v0/chat/edit_message');
-  // 与 sendCompletion 一致：视觉会话走 sseHeaders（fragments），普通会话保持 delta
-  const headers: Record<string, string> = opts?.vision ? sseHeaders(powHeader) : plainStreamHeaders(powHeader);
+  // 与 sendCompletion 一致：视觉会话走 sseHeaders（fragments），普通会话保持 delta；
+  // expert 等需服务端版本门控的会话也走 sseHeaders（缺 x-client-version 会被拒）。
+  const needsIdentity = opts?.vision || body.model_type === 'expert';
+  const headers: Record<string, string> = needsIdentity ? sseHeaders(powHeader) : plainStreamHeaders(powHeader);
   const fullBody = {
     thinking_enabled: true,
     search_enabled: true,

@@ -182,6 +182,7 @@ export default function InputBar({ sessionId }: Props) {
             chat_session_id: sessionId,
             message_id: editId,
             prompt: t,
+            model_type: conv.session?.model_type || 'default',
           },
           (ev) => {
             for (const op of parser.parse(ev)) {
