@@ -459,17 +459,6 @@ async function withPow(path: string) {
 }
 
 // 发消息 / 新建分支（SSE 流式）
-export interface CompletionBody {
-  chat_session_id: string;
-  parent_message_id: number | null;
-  model_type?: string;
-  prompt: string;
-  ref_file_ids?: string[];
-  thinking_enabled?: boolean;
-  search_enabled?: boolean;
-  preempt?: boolean;
-}
-
 // 视觉会话（会话含图片消息）校验客户端身份，缺 x-client-* 头时 completion/edit 会被拒
 //（与 regenerate 的 ban 机制一致）。带这些头 → 流切成 fragments 格式，
 // 需配合 FragmentTracker 解析（见 InputBar/MessageView）。普通文本会话保持无这些头 → delta。
@@ -477,117 +466,104 @@ export interface StreamOpts {
   vision?: boolean;
 }
 
-export async function sendCompletion(
-  body: CompletionBody,
+// ── 流式对话端点（send / edit / regenerate / resume）──
+// 这些请求体高度同构（chat_session_id + prompt + thinking/search + model_type），
+// 且 chat_session_id 与 model_type（还决定身份头：vision/expert → sseHeaders，其余 → delta）
+// 都来自会话对象。因此对 UI 只暴露业务入参（会话 + 消息/父消息 + prompt），
+// 请求体与身份头在 client 内部构造，调用方不再手拆 id / model_type / isVision。
+export interface SessionRef {
+  id: string;
+  model_type: string;
+}
+
+function completionNeedsIdentity(modelType: string): boolean {
+  // vision：缺 x-client-* 头 completion/edit 会被拒（与 regenerate 的 ban 机制一致）；
+  // expert：服务端校验客户端版本，缺 x-client-version 返回"Update to the latest version to use Expert"。
+  return modelType === 'vision' || modelType === 'expert';
+}
+
+// 流式对话的通用选项。
+// 默认：思考开、搜索关、无文件；调用方可覆盖。
+export interface SendMsgOptions {
+  thinking_enabled?: boolean;
+  search_enabled?: boolean;
+  ref_file_ids?: string[]; // 上传文件后返回的文件 ID，每条用户消息可携带一组文件（注：暂不打算做上传文件）
+}
+
+// 普通发送：于 parentMessageId（AI 消息或 null）下创建新 USER→AI 分支。
+export async function sendMessage(
+  session: SessionRef,
+  parentMessageId: number | null,
+  prompt: string,
   onEvent: (obj: Record<string, any>) => void,
   signal?: AbortSignal,
-  opts?: StreamOpts,
+  opts?: SendMsgOptions,
 ): Promise<void> {
   const powHeader = await withPow('/api/v0/chat/completion');
-  // 视觉会话走 sseHeaders（解锁 + fragments 格式）；普通会话保持无 x-client 头 → delta 流。
-  // expert 等需服务端版本门控的会话也走 sseHeaders：服务端对 expert 校验客户端版本
-  //（缺 x-client-version 时返回"Update to the latest version to use Expert"），须带完整客户端标识。
-  const needsIdentity = opts?.vision || body.model_type === 'expert';
-  const headers: Record<string, string> = needsIdentity ? sseHeaders(powHeader) : plainStreamHeaders(powHeader);
-  // completion 必填字段：缺失任一会被服务端以 HTTP 422 拒绝，这里补全默认值（调用方可覆盖）
-  const fullBody = {
-    model_type: 'default',
-    ref_file_ids: [] as string[],
-    thinking_enabled: true,
-    search_enabled: true,
-    preempt: false,
-    ...body,
-  };
-  await streamSse(`${BASE}/chat/completion`, headers, fullBody, onEvent, signal);
-}
-
-// 编辑消息重发（SSE 流式，与 completion 相同格式）
-export interface EditMessageBody {
-  chat_session_id: string;
-  message_id: number;
-  prompt: string;
-  search_enabled?: boolean;
-  thinking_enabled?: boolean;
-  /** 会话模型类型。一个会话内模型类型需保持不变；缺省时服务端按会话自身模型处理，
-      但 expert 等特殊会话若传错/不传可能导致编辑失败，需与普通发送保持一致地显式传递。 */
-  model_type?: string;
-}
-
-export async function editMessage(
-  body: EditMessageBody,
-  onEvent: (obj: Record<string, any>) => void,
-  signal?: AbortSignal,
-  opts?: StreamOpts,
-): Promise<void> {
-  const powHeader = await withPow('/api/v0/chat/edit_message');
-  // 与 sendCompletion 一致：视觉会话走 sseHeaders（fragments），普通会话保持 delta；
-  // expert 等需服务端版本门控的会话也走 sseHeaders（缺 x-client-version 会被拒）。
-  const needsIdentity = opts?.vision || body.model_type === 'expert';
-  const headers: Record<string, string> = needsIdentity ? sseHeaders(powHeader) : plainStreamHeaders(powHeader);
-  const fullBody = {
-    thinking_enabled: true,
-    search_enabled: true,
-    ...body,
-  };
-  await streamSse(`${BASE}/chat/edit_message`, headers, fullBody, onEvent, signal);
-}
-
-// 编辑消息的 completion 降级路径（绕过服务端 edit_limit 分支数限制）
-//
-// 背景（逆向结论，2026-08 实测验证）：
-//  服务端对 /chat/edit_message 端点施加分支数限制：同一父消息下子分支数 ≥6 时，
-//  edit_message 返回 SSE 错误事件 {type:"error", finish_reason:"edit_limit",
-//  content:"Edit limit reached. Message not sent."}，请求被拒绝。
-//  但 /chat/completion 端点不做该检查（实测满载父下可无限创建分支）。
-//
-//  从官方客户端源码看（2.1.0 / 2.3.6 一致），ChatEditMessageRequest 本就是
-//  ChatCompletionRequest 密封类的子类型之一：编辑的请求体是
-//  {chat_session_id, message_id, prompt, ref_file_ids, thinking_enabled,
-//   search_enabled, client_stream_id, action}，而普通发消息（ChatFullCompletionRequest）
-//  用 parent_message_id 指定新分支的父。两者在"于某父消息下创建新 USER+AI 分支"上等价，
-//  只是服务端只对 edit_message 端点做分支数校验。
-//
-//  因此"编辑重发"在满载时可降级为：completion(parent_message_id = 被编辑用户消息的父消息 id)。
-//  效果与 edit_message 一致（原消息保留，新分支挂在父下），且不受 edit_limit 限制。
-//
-//  注意：
-//  - 这是绕过服务端限制的降级路径，是否启用应作为用户设置项（默认关闭），
-//    等设置页上线后再接线；当前仅暴露接口供后续调用。
-//  - completion 的 parent 必须是 AI 消息或 null（服务端对 USER 角色返回
-//    "invalid message role"），调用方需传被编辑用户消息的父消息 id。
-export interface EditFallbackBody {
-  chat_session_id: string;
-  /** 被编辑用户消息的父消息 id（必须为 AI 消息或 null 语义） */
-  parent_message_id: number | null;
-  prompt: string;
-  search_enabled?: boolean;
-  thinking_enabled?: boolean;
-  /** 会话当前模型；不传时 sendCompletion 兜底为 'default'，会丢失会话模型 */
-  model_type?: string;
-}
-
-export async function editMessageFallback(
-  body: EditFallbackBody,
-  onEvent: (obj: Record<string, any>) => void,
-  signal?: AbortSignal,
-  opts?: StreamOpts,
-): Promise<void> {
-  const { chat_session_id, parent_message_id, prompt, search_enabled, thinking_enabled, model_type } = body;
-  await sendCompletion(
+  const headers = completionNeedsIdentity(session.model_type) ? sseHeaders(powHeader) : plainStreamHeaders(powHeader);
+  // completion 必填字段：缺失任一会被服务端以 HTTP 422 拒绝，这里补全默认值
+  await streamSse(
+    `${BASE}/chat/completion`,
+    headers,
     {
-      chat_session_id,
-      parent_message_id,
+      chat_session_id: session.id,
+      parent_message_id: parentMessageId,
+      model_type: session.model_type || 'default',
       prompt,
-      search_enabled,
-      thinking_enabled,
-      model_type,
+      ref_file_ids: opts?.ref_file_ids ?? [],
+      thinking_enabled: opts?.thinking_enabled ?? true,
+      search_enabled: opts?.search_enabled ?? false,
+      preempt: false,
     },
     onEvent,
     signal,
-    opts,
   );
 }
 
+// 编辑消息重发（SSE 流式，与 completion 相同格式）。
+// 满载时可降级到 /chat/completion 绕过服务端 edit_limit 分支数限制：
+//  背景：服务端对 /chat/edit_message 施加分支数限制，同一父下子分支数 ≥6 时返回
+//  SSE 错误 {finish_reason:"edit_limit"}；而 /chat/completion 不做该检查（实测可无限创建分支）。
+//  从官方客户端源码（2.1.0 / 2.3.6）看 ChatEditMessageRequest 本就是 ChatCompletionRequest
+//  的子类型：编辑用 {message_id}，普通发送用 {parent_message_id}，两者在"于某父下创建新
+//  USER+AI 分支"上等价，仅服务端对 edit_message 端点做分支数校验。故降级即
+//  completion(parent_message_id = 被编辑用户消息的父消息 id)。
+// 编辑选项继承发消息选项（thinking/search 可覆盖，默认思考开、搜索关），另含降级开关。
+export interface EditMsgOptions extends SendMsgOptions {
+  /** 降级用更原始的 completion 端点（默认 false；留作设置项稍后接线） */
+  fallback?: boolean;
+}
+
+export async function editMessage(
+  session: SessionRef,
+  message: NormalizedMessage,
+  prompt: string,
+  onEvent: (obj: Record<string, any>) => void,
+  signal?: AbortSignal,
+  opts?: EditMsgOptions,
+): Promise<void> {
+  if (opts?.fallback) {
+    // 取被编辑用户消息的父消息 id 即可；thinking/search 选项原样透传。
+    return sendMessage(session, message.parent_id, prompt, onEvent, signal, opts);
+  }
+  const powHeader = await withPow('/api/v0/chat/edit_message');
+  const headers = completionNeedsIdentity(session.model_type) ? sseHeaders(powHeader) : plainStreamHeaders(powHeader);
+  await streamSse(
+    `${BASE}/chat/edit_message`,
+    headers,
+    {
+      chat_session_id: session.id,
+      message_id: message.id,
+      model_type: session.model_type || 'default',
+      prompt,
+      ref_file_ids: opts?.ref_file_ids ?? [],
+      thinking_enabled: opts?.thinking_enabled ?? true,
+      search_enabled: opts?.search_enabled ?? false,
+    },
+    onEvent,
+    signal,
+  );
+}
 
 // 重新生成 AI 回复（SSE 流式）
 // 官方 web 端点 /chat/regenerate：child_message_id 为被重新生成的 AI 消息 id，
@@ -685,7 +661,7 @@ function plainStreamHeaders(powHeader: string): Record<string, string> {
 // /chat/regenerate 会被以 "ban regenerate" 拒绝，completion / edit_message 也会被拒。
 // 代价：这些头会让流切成 fragments 格式，需配合 FragmentTracker 解析
 //（视觉会话的 regenerate / completion / edit_message 都走此头 → fragments；
-//  普通文本会话保持无这些头 → delta，见 sendCompletion / editMessage 的 vision 分支）。
+//  普通文本会话保持无这些头 → delta，见 completionNeedsIdentity 的会话模型判定）。
 function sseHeaders(powHeader: string): Record<string, string> {
   return {
     'Content-Type': 'application/json',

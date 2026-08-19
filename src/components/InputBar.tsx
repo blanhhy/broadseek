@@ -1,7 +1,7 @@
 // 底部输入栏：发送消息（乐观 UI：立即在对话页追加 User，流式生成 AI，失败撤回）
 import { useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { sendCompletion, editMessage, fetchHistory, normalizeMessage, enrichMessageFiles, ApiError } from '../core/api/client';
+import { sendMessage, editMessage, fetchHistory, normalizeMessage, enrichMessageFiles, ApiError, type SessionRef } from '../core/api/client';
 import { useConversation } from '../core/store';
 import { buildIndex, activePathOf } from '../core/api/tree';
 import { DeltaParser, FragmentTracker, nextTempId } from '../core/api/delta';
@@ -76,11 +76,9 @@ export default function InputBar({ sessionId }: Props) {
     ? conv.activePath[conv.activePath.length - 1]
     : null;
 
-  // 视觉会话判定：以会话模型类型为准（chat_session.model_type === 'vision'）。
-  // 不能用"会话含图片"判断——非视觉模型（default/OCR）也能发图片，但那不是视觉模型会话。
-  // 服务端对 vision 模型的 completion/edit 校验客户端身份（缺 x-client-* 头会被拒），
-  // 需带 sseHeaders（→ fragments 流格式）；default 会话保持 delta。见 client.ts StreamOpts。
-  const isVision = conv.session?.model_type === 'vision';
+  // 发送/编辑只依赖会话的 id 与 model_type（身份头、模型类型均由此在 client 内部推导），
+  // 会话尚未就绪时兜底 model_type='default'。见 client.ts SessionRef/sendMessage。
+  const sess: SessionRef = conv.session ?? { id: sessionId, model_type: 'default' };
 
   const refresh = async () => {
     const data = await fetchHistory(sessionId);
@@ -177,14 +175,7 @@ export default function InputBar({ sessionId }: Props) {
             ),
           }));
         };
-        await editMessage(
-          {
-            chat_session_id: sessionId,
-            message_id: editId,
-            prompt: t,
-            model_type: conv.session?.model_type || 'default',
-          },
-          (ev) => {
+        await editMessage(sess, editMsg, t, (ev) => {
             for (const op of parser.parse(ev)) {
               frag.apply(op.path, op.op, op.value);
               if (frag.active) {
@@ -216,9 +207,8 @@ export default function InputBar({ sessionId }: Props) {
               }
             }
             applyStream();
-          },
-          undefined,
-          { vision: isVision },
+          }, 
+          // undefined, {fallback: true}
         );
         await refresh();
       } catch (e: any) {
@@ -271,14 +261,7 @@ export default function InputBar({ sessionId }: Props) {
           ),
         }));
       };
-      await sendCompletion(
-        {
-          chat_session_id: sessionId,
-          parent_message_id: parentMessageId,
-          model_type: conv.session?.model_type || 'default',
-          prompt: t,
-        },
-        (ev) => {
+      await sendMessage(sess, parentMessageId, t, (ev) => {
           for (const op of parser.parse(ev)) {
             frag.apply(op.path, op.op, op.value);
             if (frag.active) {
@@ -310,10 +293,7 @@ export default function InputBar({ sessionId }: Props) {
             }
           }
           applyStream();
-        },
-        undefined,
-        { vision: isVision },
-      );
+        });
       await refresh(); // 成功：用服务器真实数据替换临时消息
     } catch (e: any) {
       console.error('发送失败', e);
