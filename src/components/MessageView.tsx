@@ -18,6 +18,10 @@ const BATCH = 20;
 // 输入卡片覆盖在消息区底部的高度：定位/可视判断时视口高度应扣除它，避免被输入框遮挡
 const INPUT_OVERLAY = 104;
 
+// thinking 收起时向上修正标题的最大幅度（px）。超过该值视为"深读中被粘性钉住"，
+// 此时 static 位置远离上缘，强行对齐会把视口抛到历史深处，故只处理小幅贴合场景。
+const SETTLE_CAP_PX = 60;
+
 function scheduleIdle(fn: () => void, timeout = 300) {
   const w = window as any;
   if (typeof w.requestIdleCallback === 'function') {
@@ -91,9 +95,15 @@ function Bubble({ m, onToggleActions }: { m: NormalizedMessage; onToggleActions?
   const thinkBtnRef = useRef<HTMLButtonElement>(null);
   const thinkingBodyRef = useRef<HTMLDivElement>(null);
   const thinkOpening = useRef(false); // 记录本次过渡是展开还是收起，用于 transitionend 收尾
+  const streaming = useConversation((s) => s.streaming);
 
-  // 标题 flow（未吸顶）位置若已贴住/超出视口上缘，则滚动让它刚好对齐到顶部
+  // 标题 flow（未吸顶）位置若已贴住/超出视口上缘，则滚动让它刚好对齐到顶部。
+  // 注意：流式生成中绝不调用——生成时若标题被粘性钉住且已深读，其 static 位置会远离上缘
+  // （flowTop 为很大的负值），直接 scrollTop += flowTop 会把视口一次抛到极前的历史消息，
+  // 随后被流式贴底又拽回，形成闪烁。故流式期间跳过，且冷加载时把向上修正截断在小幅范围，
+  // 只处理"刚被粘性触发、static 恰在上一带"的场景，杜绝大跳。
   const settleTitle = () => {
+    if (streaming) return;
     const sc2 = document.querySelector('.msg-scroll') as HTMLElement | null;
     const btn2 = thinkBtnRef.current;
     if (!sc2 || !btn2) return;
@@ -101,7 +111,9 @@ function Bubble({ m, onToggleActions }: { m: NormalizedMessage; onToggleActions?
     btn2.style.position = 'static'; // 临测未吸顶的 flow 位置
     const flowTop = btn2.getBoundingClientRect().top - sc2.getBoundingClientRect().top;
     btn2.style.position = saved;
-    if (flowTop <= 4) sc2.scrollTop += flowTop; // 已贴顶或超出 → 上移对齐
+    // 仅当标题恰好贴顶或略微超出（-SETTLE_CAP_PX ~ 4px）时小幅上移对齐；
+    // 深读/流式场景 flowTop 大负，一律不跳
+    if (flowTop <= 4 && flowTop > -SETTLE_CAP_PX) sc2.scrollTop += flowTop;
   };
 
   const handleThinkToggle = () => {
@@ -454,6 +466,7 @@ const MessageView = forwardRef<MessageViewHandle, Props>(function MessageView(
   const rafRef = useRef<number | null>(null);
   const lastReported = useRef<string>('');
   const lastAtBottom = useRef<boolean>(true);
+  const atBottomRef = useRef<boolean>(true);
   const lastViewed = useRef<number | null>(null);
   const setActivePath = useConversation((s) => s.setActivePath);
   const setData = useConversation((s) => s.setData);
@@ -681,7 +694,11 @@ const MessageView = forwardRef<MessageViewHandle, Props>(function MessageView(
     }
   }, [activePath]);
 
-  // 路径变化时重置首屏渲染数量
+  // 路径变化时重置首屏渲染数量。
+  // 注意：此 effect 必须只挂在 activePath 上，而非 pathMessages：
+  // 流式生成期间每次 fragment 都会重建 messages/pathMessages 引用，但 activePath 保持不变。
+  // 若挂在 pathMessages 上，"重置到 BATCH" 会在每个 fragment 都触发，把已渲染窗口骤缩回尾部20条，
+  // 导致 scrollHeight 骤减、scrollTop 被 clamp——正是分支切换跳顶的同源根因（闪到很高又被拉回）。
   useEffect(() => {
     if (forceFullRender.current) {
       // 分支切换：一次性渲染整条路径，保证 scrollHeight 完整、新切换器可定位
@@ -708,7 +725,7 @@ const MessageView = forwardRef<MessageViewHandle, Props>(function MessageView(
     } else {
       setRenderCount(Math.min(BATCH, pathMessages.length));
     }
-  }, [pathMessages]);
+  }, [activePath]);
 
   // 空闲时分批补齐剩余消息
   useEffect(() => {
@@ -788,12 +805,25 @@ const MessageView = forwardRef<MessageViewHandle, Props>(function MessageView(
     },
   }), [pathMessages, renderCount]);
 
-  // 判断是否接近底部，供"回到底部"按钮显隐
+  // 流式贴底阈值：仅当几乎完全贴底（剩余 ≤ 4px）才视为"在底部"。
+  // 用户一旦上滑（哪怕几像素）即视为离开底部，流式更新不再把他拉回，
+  // 新内容只在底部扩展；只有本来就贴底时才自动跟随到底。过大的阈值
+  // （如 80px）会导致短距离上滑仍被判定贴底、被流式不断拉回。
+  const STICKY_BOTTOM_PX = 4;
+  // 返回按钮显隐阈值：离开底部一段距离才显示"回到底部"按钮（避免贴边即显示闪烁）。
+  const NEXT_BOTTOM_BTN_PX = 80;
   const reportAtBottom = useCallback((el: HTMLElement) => {
-    const ab = el.scrollHeight - el.scrollTop - el.clientHeight < 80;
-    if (ab !== lastAtBottom.current) {
-      lastAtBottom.current = ab;
-      setAtBottom(ab);
+    const remaining = el.scrollHeight - el.scrollTop - el.clientHeight;
+    // 流式贴地：严格判定
+    const sticky = remaining <= STICKY_BOTTOM_PX;
+    if (sticky !== lastAtBottom.current) {
+      lastAtBottom.current = sticky;
+    }
+    // 返回按钮：宽松判定 → atBottom（贴底为 true），渲染处用 !atBottom 即"非贴底时显示按钮"
+    const nearBottom = remaining <= NEXT_BOTTOM_BTN_PX;
+    if (nearBottom !== atBottomRef.current) {
+      atBottomRef.current = nearBottom;
+      setAtBottom(nearBottom);
     }
   }, []);
 
