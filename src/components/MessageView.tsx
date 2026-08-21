@@ -525,7 +525,12 @@ const MessageView = forwardRef<MessageViewHandle, Props>(function MessageView(
   const refreshFromServer = useCallback(async () => {
     if (!sessionId) return;
     const data = await fetchHistory(sessionId);
+    // 流式期间可能已切换到别的会话（本闭包仍持有旧 sessionId）：
+    // 若当前打开的会话已不是发起时的会话，丢弃这次刷新，避免把旧会话数据覆盖到新会话上
+    //（现象：左侧栏选择会话 B 后，A 的重新生成结束把 A 的内容写回，误以为进入了错误会话）
+    if (useConversation.getState().sessionId !== sessionId) return;
     const apply = (msgs: NormalizedMessage[]) => {
+      if (useConversation.getState().sessionId !== sessionId) return;
       const newIdx = buildIndex(msgs);
       const active = activePathOf(newIdx, data.chat_session.current_message_id);
       setData({
@@ -655,11 +660,15 @@ const MessageView = forwardRef<MessageViewHandle, Props>(function MessageView(
       }
     } catch (e: any) {
       console.error('重新生成失败', e);
-      useConversation.setState((s) => ({
-        messages: s.messages.filter((x) => x.id !== tempAiId),
-        activePath: prevPath,
-        currentMessageId: prevPath[prevPath.length - 1] ?? null,
-      }));
+      // 撤回虚拟消息并恢复原路径仅当仍停留在发起会话时进行；
+      // 若已切换到别的会话，直接覆盖会破坏新会话的 activePath/currentMessageId（误进会话问题）
+      if (useConversation.getState().sessionId === sessionId) {
+        useConversation.setState((s) => ({
+          messages: s.messages.filter((x) => x.id !== tempAiId),
+          activePath: prevPath,
+          currentMessageId: prevPath[prevPath.length - 1] ?? null,
+        }));
+      }
       // 服务端拒绝（"ban regenerate" / "重新生成次数超过限制"）映射为友好文案；
       // 其余错误透出失败提示
       const text = e instanceof ApiError ? e.message : '';
